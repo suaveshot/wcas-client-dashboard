@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# -----------------------------------------------------------------------------
+# wcas-client-dashboard — pre-commit hook
+#
+# Blocks commits that include secrets, tenant data, or em dashes.
+# Enable with: git config core.hooksPath .githooks
+# -----------------------------------------------------------------------------
+
+set -e
+
+RED=$'\033[0;31m'
+YELLOW=$'\033[0;33m'
+GREEN=$'\033[0;32m'
+RESET=$'\033[0m'
+
+fail=0
+
+# 1. Block accidentally-staged secret filenames
+BANNED_PATHS=(
+  '^\.env$'
+  '^\.env\.'
+  '^(?!.*\.env\.example$).*\.env$'
+  'tenant_config\.json'
+  'baseline\.json'
+  'goals\.json'
+  'brand\.json'
+  'dashboard_decisions\.jsonl'
+  'token\.json'
+  'credentials\.json'
+  'service_account.*\.json'
+  '.*\.pem$'
+  '.*\.key$'
+)
+
+staged=$(git diff --cached --name-only --diff-filter=ACM)
+
+for path in $staged; do
+  for banned in "${BANNED_PATHS[@]}"; do
+    if echo "$path" | grep -Pq "$banned"; then
+      # Allow .env.example explicitly
+      if [ "$path" = ".env.example" ]; then continue; fi
+      echo "${RED}BLOCKED:${RESET} $path matches banned pattern /$banned/"
+      fail=1
+    fi
+  done
+done
+
+# 2. Block common secret token patterns anywhere in staged diffs
+if git diff --cached | grep -Pq '(sk-ant-api03-[A-Za-z0-9_\-]{80,}|AIza[0-9A-Za-z_\-]{35,}|pat[A-Za-z0-9]{10,}|GOCSPX-[A-Za-z0-9_\-]{20,}|AC[a-f0-9]{32})'; then
+  echo "${RED}BLOCKED:${RESET} staged diff contains what looks like a real API key or token."
+  echo "  Move real values to .env (gitignored). Use placeholders in committed files."
+  fail=1
+fi
+
+# 3. Block em dashes in code/content files.
+#    Allowlist: detection files that must literally contain the char.
+EMDASH_ALLOWLIST='(tests/test_smoke\.py|\.githooks/pre-commit|docs/ci-templates/security\.yml\.template)'
+emdash_hits=$(
+  git diff --cached --name-only --diff-filter=ACM \
+    | grep -E '\.(py|html|md|css|js|yml|yaml|sh)$' \
+    | grep -Ev "$EMDASH_ALLOWLIST" \
+    | while read -r f; do
+        if [ -f "$f" ] && grep -q $'—' "$f" 2>/dev/null; then echo "$f"; fi
+      done
+)
+if [ -n "$emdash_hits" ]; then
+  echo "${YELLOW}WARNING:${RESET} em dash (U+2014) found in:"
+  echo "$emdash_hits" | sed 's/^/  /'
+  echo "  Use commas, periods, or spaced hyphens. This is a brand voice rule."
+  fail=1
+fi
+
+if [ $fail -ne 0 ]; then
+  echo ""
+  echo "${RED}Pre-commit hook blocked this commit.${RESET}"
+  echo "Fix the issues above, re-stage, and commit again."
+  exit 1
+fi
+
+echo "${GREEN}Pre-commit checks passed.${RESET}"
+exit 0

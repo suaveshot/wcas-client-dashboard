@@ -1,0 +1,16 @@
+# Normalize line endings to LF on commit; check out native per-platform
+* text=auto eol=lf
+
+# Shell scripts must stay LF regardless of platform (ship to Linux VPS)
+*.sh text eol=lf
+.githooks/* text eol=lf
+
+# Binary files - do not attempt line-ending conversion
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.mp4 binary
+*.mov binary

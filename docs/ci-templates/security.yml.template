@@ -1,0 +1,44 @@
+name: security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 13 * * 1"  # Monday 6am PT
+
+jobs:
+  secrets-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  pip-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pip-audit
+        run: pip install pip-audit
+      - name: Audit dependencies
+        run: pip-audit -r requirements.txt --ignore-vuln GHSA-xxxx-xxxx-xxxx || true
+
+  em-dash-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for em dashes in source
+        run: |
+          if grep -rn $'—' --include='*.py' --include='*.html' --include='*.md' --include='*.css' --include='*.js' . ; then
+            echo "Em dashes found. Use commas, periods, or spaced hyphens."
+            exit 1
+          fi
