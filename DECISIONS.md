@@ -222,4 +222,48 @@ Short crisp entries for each major technical decision. Format: **what, why, alte
 
 ---
 
+---
+
+## ADR-013  -  Heartbeat pattern: PC-side fire-and-forget
+**Date:** 2026-04-21 22:20 PDT
+**Status:** Accepted and shipping
+
+**Decision:** Americal Patrol pipelines running on Sam's PC push their post-run state to the dashboard via a small Python script (`Americal Patrol/shared/push_heartbeat.py`) that each pipeline's `.bat` wrapper calls at end-of-run. The script:
+- Never crashes the calling pipeline (always exits 0 even on network error).
+- Has a 5-second HTTP timeout (never blocks pipeline beyond that).
+- Redirects stdout/stderr to `nul` in the .bat so pipeline output stays clean.
+- Logs locally to `shared/heartbeat.log` for debugging without SSH to the VPS.
+- Caps `state_summary` payload to scalar fields + `*_count` rollups, keeping total under ~3 KB. Full tenant state is read server-side when needed.
+
+**Why fire-and-forget vs tight coupling:** the pipelines are production workloads that must not break because of the dashboard. Heartbeat failure should be a dashboard-side problem, not a pipeline-side one. The dashboard treats missing heartbeats as "unknown" status, which is the correct degraded-mode UX.
+
+**Auth:** shared secret header `X-Heartbeat-Secret`. Rotatable via `.env` on both ends.
+
+**Wired pipelines this week:** patrol (Morning Reports), seo (Weekly SEO), sales_pipeline (Daily Run). Remaining pipelines wired Day 2 morning.
+
+---
+
+## ADR-014  -  Managed Agent resource lifecycle: archive vs delete
+**Date:** 2026-04-21 22:40 PDT
+**Status:** Accepted
+
+**Decision (discovered via smoke test):** The Anthropic Managed Agents Python SDK uses different cleanup semantics across resource types:
+- `client.beta.agents.archive(id)` (NOT `delete`)  -  agents are versioned resources; archiving retains version history but marks them inactive.
+- `client.beta.environments.delete(id)`  -  environment templates are deleted outright.
+- `client.beta.sessions.delete(id)`  -  session records are deleted outright.
+
+**Why this matters:** Day 3 activation flow creates resources per tenant activation. If we use the wrong cleanup method, either cleanup fails silently (agents) or resources pile up costing money. Document the distinction in `scripts/smoke_managed_agent.py` as a canonical reference.
+
+---
+
+## ADR-015  -  External uptime monitor via GitHub Actions cron
+**Date:** 2026-04-21 22:50 PDT
+**Status:** Proposed (template ready, pending workflow-scope auth)
+
+**Decision:** Rather than sign up for a third-party uptime service, run the uptime check as a GitHub Actions cron job every 10 minutes. Job runs on GitHub's infrastructure (fully external from our Hostinger VPS), pings `/healthz`, fails the workflow on non-200, which sends the repo owner an email notification. Zero cost, zero extra account, included in GitHub free tier minutes.
+
+**Template:** `docs/ci-templates/uptime.yml.template`. Activates once Sam runs `gh auth refresh -s workflow -h github.com` and moves the file to `.github/workflows/uptime.yml`.
+
+---
+
 *More ADRs added as decisions are made during the build.*

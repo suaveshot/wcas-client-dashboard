@@ -1,0 +1,39 @@
+name: uptime
+
+# External uptime monitor for the dashboard. GitHub Actions pings /healthz every
+# 10 minutes from GitHub's infrastructure (fully external from our Hostinger VPS),
+# fails the job if the response is not HTTP 200 or the body is missing "status":"ok",
+# which sends the repo owner an email notification.
+#
+# To enable: move this file to .github/workflows/uptime.yml after running
+#   gh auth refresh -s workflow -h github.com
+# so the gh CLI token has the workflow scope.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  healthz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Ping /healthz
+        run: |
+          set -e
+          URL="https://dashboard.westcoastautomationsolutions.com/healthz"
+          echo "probing $URL"
+          response=$(curl -fsS --max-time 10 -w '\n---\n%{http_code}\n%{time_total}\n' "$URL")
+          echo "$response"
+          code=$(echo "$response" | awk '/^---$/{flag=1;next} flag' | head -1)
+          body=$(echo "$response" | awk '/^---$/{exit} {print}')
+          if [ "$code" != "200" ]; then
+            echo "::error::non-200 status $code"
+            exit 1
+          fi
+          if ! echo "$body" | grep -q '"status":"ok"'; then
+            echo "::error::body does not contain status:ok (got: $body)"
+            exit 1
+          fi
+          echo "OK"

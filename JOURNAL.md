@@ -212,3 +212,55 @@ Caddy obtained fresh Let's Encrypt certs for both domains on the first attempt. 
 - AP heartbeat PC-side script + wire 3 pipelines
 - Brand-matched magic-link email template
 - Real pipeline grid with live AP telemetry
+
+---
+
+## Entry 4  -  Day 1 evening, "what else can we do now"
+**2026-04-21 15:05 PDT to 16:10 PDT**
+
+After the deploy, Sam gave the green light to push a few more items tonight: set up an external uptime monitor, build the AP-side heartbeat + wire 3 pipelines, smoke-test the Managed Agents SDK end-to-end, and stretch a plan for the $500 hackathon credits. All three landed.
+
+**15:15 PDT  -  AP heartbeat live.** Wrote `Americal Patrol/shared/push_heartbeat.py`  -  a fire-and-forget Python script each AP pipeline's `.bat` wrapper calls at end-of-run. Design rules encoded in ADR-013: never crash the pipeline, 5s HTTP timeout, log locally to `shared/heartbeat.log`, cap payload size. Added `DASHBOARD_URL` + `HEARTBEAT_SHARED_SECRET` to AP's `.env`.
+
+First real heartbeat POST from Sam's PC to the freshly-deployed dashboard:
+```
+[2026-04-21T15:23:15] patrol status=success ok=True elapsed=0.39s detail=HTTP 200
+```
+Three-hop path: Sam's PC -> public internet -> Hostinger Caddy -> dashboard FastAPI -> 401-gated auth check -> 200. End-to-end, the stack works.
+
+**15:24 PDT  -  sales_pipeline heartbeat fails on payload size.** Default heartbeat payload included the full `pipeline_state.json` (56+ active contacts), which ballooned to 116 KB and got `URLError WinError 10053` (connection aborted). Diagnosed and fixed: the payload now ships a `state_summary` of scalar fields + `*_count` rollups (2.6 KB) rather than the raw state. Dashboard can read full state server-side when it needs to. Retry: 200 OK, 0.32s elapsed.
+
+**15:25 PDT  -  3 AP pipelines wired.** Modified three `.bat` files to call the heartbeat after their main run, redirecting stdout/stderr to `nul` so pipeline output stays clean:
+- `patrol_automation/Run Morning Reports.bat`
+- `seo_automation/Run Weekly SEO.bat`
+- `sales_pipeline/run_pipeline_daily.bat`
+
+Tomorrow morning's Task Scheduler runs (morning reports 7am, sales pipeline 8am) will both heartbeat without any code change. SEO doesn't run until Monday, but its wrapper is armed.
+
+**Also verified the heartbeat is properly closed.** `POST /api/heartbeat` with missing or wrong `X-Heartbeat-Secret` header returns 401. The public repo exposes the endpoint URL but not the secret, and rate-limiting ships Day 2. Public curl tests confirmed the 401 behavior.
+
+**15:40 PDT  -  Managed Agents smoke test end-to-end.** Ran a minimal full-lifecycle test against Anthropic's beta: created an agent with a custom `confirm_company_name` tool schema alongside the built-in `agent_toolset_20260401`, created a cloud environment, started a session, opened the event stream, sent a user message, iterated events, reached session idle. The lifecycle itself works.
+
+Two bugs caught early thanks to the smoke test:
+1. My event loop broke on the first `session.status_idle`, but fresh sessions emit idle immediately because they have no work; real work happens idle -> active -> idle. Fixed in `scripts/smoke_managed_agent.py` by counting idle events and breaking on the SECOND.
+2. Agents use `archive(id)`, not `delete(id)`, since they're versioned resources. Environments and sessions use `delete(id)`. Both discoveries logged as ADR-014 so Day 3 implementation doesn't repeat the mistakes. Cost of this smoke test: roughly $0.50 in credits, probably less.
+
+Three orphaned resources from the first run were cleaned up successfully once I had the right method names.
+
+**15:55 PDT  -  external uptime monitor template ready.** Instead of signing up for UptimeRobot or similar, wrote a GitHub Actions workflow (`docs/ci-templates/uptime.yml.template`) that pings `/healthz` every 10 minutes from GitHub's infrastructure (fully external from our VPS) and fails the job on non-200, which sends Sam an email via GitHub's default notifications. Zero cost, zero extra account, covered by free-tier minutes. Activates once Sam runs `gh auth refresh -s workflow -h github.com` to add the workflow scope to the gh CLI token. Documented in ADR-015.
+
+### What Day 1 shipped in total
+- Public HTTPS dashboard live: https://dashboard.westcoastautomationsolutions.com
+- Shared Caddy serving dashboard + existing Garcia Folklorico API, certs fresh
+- Public GitHub repo: https://github.com/suaveshot/wcas-client-dashboard
+- Dependabot active; CI templates for security + uptime ready to enable
+- Opus 4.7 + Managed Agents beta + 1M context all confirmed on Sam's API key
+- Managed Agents smoke test passed; SDK patterns + cleanup semantics documented
+- AP -> VPS heartbeat live; 3 AP pipelines (patrol, seo, sales) pushing real state
+- 15 ADRs recorded, 4 JOURNAL entries, all code-reviewer findings fixed
+- $500 credit budget + daily burn plan documented
+
+### What tomorrow starts with
+- AP's 7am patrol run tomorrow morning emits the first "natural" heartbeat with no manual prompt.
+- Dashboard's `/api/pipelines` still returns `{"pipelines": [], "status": "scaffold"}`  -  Day 2 wires it to the persisted heartbeats.
+- Magic-link auth, cookie-based sessions, tenant-scoping middleware, cost-tracker + prompt scrubber all ship Day 2 morning.

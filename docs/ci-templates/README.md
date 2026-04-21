@@ -19,5 +19,6 @@ git push
 ## What's here
 
 - **security.yml.template** - runs gitleaks (secrets scan), pip-audit (dependency CVEs), and an em-dash check on every push to main, every PR, and on a weekly schedule Monday morning.
+- **uptime.yml.template** - pings the live dashboard /healthz every 10 minutes from GitHub's infrastructure; fails the job on non-200 or missing `"status":"ok"`, which sends the repo owner an email. Fully external uptime monitor, zero cost, no extra account needed.
 
-When these are enabled, Dependabot alerts + gitleaks + pip-audit + the em-dash brand rule all run automatically on every commit.
+When these are enabled, Dependabot alerts + gitleaks + pip-audit + the em-dash brand rule + external uptime monitoring all run automatically on every commit and every 10 minutes.
