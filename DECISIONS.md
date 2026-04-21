@@ -179,4 +179,47 @@ Short crisp entries for each major technical decision. Format: **what, why, alte
 
 ---
 
+---
+
+## ADR-011  -  VPS selection: srv1568946 (Ubuntu) over srv892948 (n8n)
+**Date:** 2026-04-21 12:40 PDT
+**Status:** Accepted
+
+**Decision:** Deploy the dashboard to Hostinger VPS srv1568946.hstgr.cloud (IP 93.127.216.242), not srv892948.hstgr.cloud (IP 31.97.147.220).
+
+**Why:**
+- srv892948 runs n8n + the existing WCAS workflow stack (9+ production workflows). A dashboard bug there could disrupt every active WCAS automation.
+- srv1568946 runs lower-criticality services (Garcia Folklorico site + AP automations support). Isolation protects the n8n stack.
+- SSH key is already configured for srv1568946 as the `garcia-vps` alias in ~/.ssh/config; no new access provisioning needed.
+
+**Trade-off:** the dashboard needs to call n8n webhooks (hosted on srv892948). That's cross-VPS over the public internet, adds ~20ms latency, but n8n webhooks are already designed for public access.
+
+---
+
+## ADR-012  -  Shared Caddy proxy plan (pending authorization)
+**Date:** 2026-04-21 13:15 PDT
+**Status:** Proposed, pending Sam authorization
+
+**Situation:** srv1568946 has ports 80/443 held by `garcia-folklorico-caddy-1`, a Caddy instance running in command mode (`caddy reverse-proxy --from api.garciafolklorico.com --to app:8000`). Dedicated to one domain.
+
+**Proposed decision:** Replace Garcia's dedicated Caddy with a shared Caddy container that serves both `api.garciafolklorico.com` and `dashboard.westcoastautomationsolutions.com` from a Caddyfile. New files at `/docker/wcas-dashboard/` (Caddyfile + docker-compose.yml). New Caddy joins `garcia-folklorico_default` network to reach Garcia's app container. Garcia's app container is never touched.
+
+**Why not skip and use a different port?**
+- Non-standard port breaks HTTPS-via-Let's Encrypt.
+- Judges hitting a dashboard at `:8443` see a broken-looking URL. Bad first impression.
+- The shared-proxy pattern is where the VPS needs to go anyway once a second WCAS paying client signs. Doing it now is 30 min; doing it when we have 3 clients is a weekend.
+
+**Trade-off:** 30 to 60 seconds of downtime on `api.garciafolklorico.com` during the swap. Garcia is a dance-studio booking site, not time-critical. Sam can pick a low-traffic moment.
+
+**Alternative paths already considered and rejected:**
+- Modify Garcia's compose in place: same risk, less clean state.
+- Run dashboard on a separate port: bad URL, breaks judging first impression.
+- Deploy to the other VPS (srv892948): no SSH access from this session.
+- Deploy via Cloudflare / Vercel: forbidden per `feedback_no_cloudflare.md`.
+- Defer VPS deploy entirely: costs us the live-URL judging criterion on Day 2.
+
+**Sam's decision required before Day 2 build starts.**
+
+---
+
 *More ADRs added as decisions are made during the build.*
