@@ -163,3 +163,52 @@ Chose srv1568946 for the dashboard. Isolates any dashboard bugs from n8n.
 
 ### What this entry tells a judge
 This is a solo build hitting real production infrastructure on Day 1. By 2pm on the first hackathon day we had: a public repo with submission-quality scaffolding, working API access on Anthropic's newest beta platform, DNS live for the target subdomain, 8 passing tests, a clean plan for the remaining four days, and a paused production-change that respected client boundaries rather than pushing through.
+
+---
+
+## Entry 3  -  Day 1 deploy, evening block
+**2026-04-21 16:00 PDT to 16:30 PDT**
+
+**16:10 PDT  -  Day 1 review fixes landed.** Applied every critical and high-priority finding from the code-reviewer subagent:
+- `scripts/backup.sh` no longer `source`s the `.env` file (shell-injection risk); parses line-by-line and exports only `KEY=VALUE` lines that pass a regex check. Added an `ERR` trap so cron-time failures land in `/var/log/wcas-backup.log` instead of silently dying.
+- `.githooks/pre-commit` now iterates staged files with NUL separators so filenames with spaces can't slip through. Secret regex expanded: `ghp_*`, `github_pat_*`, `xox[bp]-*`, `AKIA*`, `sk_live_*`, Connecteam `ct_*`, GHL `pit-*`.
+- `Dockerfile` creates a non-root `app` user and `chown`s `/opt/wc-solns` to it. Container no longer runs as root.
+- `/api/heartbeat` now requires an `X-Heartbeat-Secret` header; returns 401 without it. The endpoint is closed on the public repo from Day 1, not open-as-placeholder.
+- All HTML placeholder responses moved to Jinja2 templates at `dashboard_app/templates/placeholder.html` with auto-escape on. No more string-concatenated HTML, so Day 2+ user-data rendering can't introduce XSS by accident.
+- `docker-compose.yml` volume mount now has a comment pointing to the app's tenant directory convention so Day 2 tenant-writes don't drift.
+- `.env.example` Airtable base/table IDs replaced with placeholders. Real IDs stay in private `.env` only.
+- New `scripts/gen-secret.sh` one-liner for session + heartbeat secrets (`secrets.token_urlsafe(32)`).
+
+All 8 smoke tests still pass after the refactor.
+
+**16:15 PDT  -  Sam authorized the shared-Caddy deploy (Option A from end-of-day summary).** Executing.
+
+**16:17 PDT  -  secrets staged on VPS.** Wrote `/docker/wcas-dashboard/.env` with 600 perms via ssh heredoc (never touched local disk). Generated fresh `SESSION_SECRET` and `HEARTBEAT_SHARED_SECRET` via `secrets.token_urlsafe(32)`. Pulled `ANTHROPIC_API_KEY` + `GMAIL_APP_PASSWORD` from Americal Patrol's `.env`, and the WCAS Airtable PAT + table IDs from `WC Solns/wc-platform-template/.env`.
+
+**16:18 PDT  -  compose + Caddyfile in place.** Multi-network setup: the shared Caddy joins both `proxy` (new) and `garcia-folklorico_default` (external, so it can reach Garcia's app container at hostname `garcia-folklorico-app-1`). Image built successfully.
+
+**16:20:21 UTC  -  cutover start.** Stopped `garcia-folklorico-caddy-1` (Garcia downtime begins). Immediately started `/docker/wcas-dashboard/` stack.
+
+**16:21:26 UTC  -  cutover end. 65-second Garcia downtime.** First `curl` to both domains returned:
+- `https://dashboard.westcoastautomationsolutions.com/healthz` -> `{"status":"ok","version":"0.1.0"}`
+- `https://api.garciafolklorico.com/api/health` -> `{"status":"ok"}`
+
+Caddy obtained fresh Let's Encrypt certs for both domains on the first attempt. The whole swap took longer to plan than execute.
+
+**Garcia's old Caddy left stopped, not removed.** 24-hour rollback buffer. If anything breaks overnight, `docker start garcia-folklorico-caddy-1` restores Garcia's prior state (dashboard goes offline, Garcia recovers).
+
+### Day 1 FINAL delivered (updated)
+- Public repo live + polished: https://github.com/suaveshot/wcas-client-dashboard
+- **Public HTTPS dashboard live:** https://dashboard.westcoastautomationsolutions.com
+- Docker container running non-root, heartbeat endpoint requires secret from Day 1
+- Shared Caddy serving both WCAS dashboard and Garcia's api with auto-renewing certs
+- Opus 4.7 + Managed Agents beta confirmed working, research preview applied for
+- All code-reviewer findings from Day 1 closed
+
+### Queued for Day 2 start
+- UptimeRobot monitor on `/healthz`
+- Security-first auth block (magic link + HttpOnly+SameSite=Strict cookie + SHA-256-hashed tokens)
+- Cost-tracker middleware + prompt/log scrubber
+- AP heartbeat PC-side script + wire 3 pipelines
+- Brand-matched magic-link email template
+- Real pipeline grid with live AP telemetry
