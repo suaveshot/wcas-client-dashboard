@@ -10,10 +10,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+# Non-root user for the app process
+RUN useradd --create-home --shell /bin/bash app \
+    && mkdir -p /opt/wc-solns \
+    && chown -R app:app /app /opt/wc-solns
+
+COPY --chown=app:app requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY dashboard_app ./dashboard_app
+COPY --chown=app:app dashboard_app ./dashboard_app
+
+USER app
 
 # Health check hits /healthz which main.py serves
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \

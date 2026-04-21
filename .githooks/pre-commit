@@ -15,39 +15,57 @@ RESET=$'\033[0m'
 
 fail=0
 
-# 1. Block accidentally-staged secret filenames
-BANNED_PATHS=(
+# 1. Block accidentally-staged secret filenames.
+# Iterate with NUL separators to handle filenames with spaces safely.
+BANNED_PATTERNS=(
   '^\.env$'
-  '^\.env\.'
-  '^(?!.*\.env\.example$).*\.env$'
-  'tenant_config\.json'
-  'baseline\.json'
-  'goals\.json'
-  'brand\.json'
-  'dashboard_decisions\.jsonl'
-  'token\.json'
-  'credentials\.json'
-  'service_account.*\.json'
-  '.*\.pem$'
-  '.*\.key$'
+  '(^|/)\.env\.(?!example$)'
+  'tenant_config\.json$'
+  'baseline\.json$'
+  'goals\.json$'
+  'brand\.json$'
+  'dashboard_decisions\.jsonl$'
+  '(^|/)token\.json$'
+  '(^|/)credentials\.json$'
+  'service_account.*\.json$'
+  '\.pem$'
+  '\.key$'
+  '\.p12$'
+  '\.pfx$'
 )
 
-staged=$(git diff --cached --name-only --diff-filter=ACM)
-
-for path in $staged; do
-  for banned in "${BANNED_PATHS[@]}"; do
-    if echo "$path" | grep -Pq "$banned"; then
-      # Allow .env.example explicitly
-      if [ "$path" = ".env.example" ]; then continue; fi
-      echo "${RED}BLOCKED:${RESET} $path matches banned pattern /$banned/"
+while IFS= read -r -d '' path; do
+  [ "$path" = ".env.example" ] && continue
+  for pattern in "${BANNED_PATTERNS[@]}"; do
+    if printf '%s' "$path" | grep -Pq "$pattern"; then
+      printf '%sBLOCKED:%s %s matches banned pattern /%s/\n' \
+        "$RED" "$RESET" "$path" "$pattern"
       fail=1
     fi
   done
-done
+done < <(git diff --cached --name-only --diff-filter=ACM -z)
 
-# 2. Block common secret token patterns anywhere in staged diffs
-if git diff --cached | grep -Pq '(sk-ant-api03-[A-Za-z0-9_\-]{80,}|AIza[0-9A-Za-z_\-]{35,}|pat[A-Za-z0-9]{10,}|GOCSPX-[A-Za-z0-9_\-]{20,}|AC[a-f0-9]{32})'; then
-  echo "${RED}BLOCKED:${RESET} staged diff contains what looks like a real API key or token."
+# 2. Block common secret token patterns anywhere in staged diffs.
+# Patterns: Anthropic, Google AI Studio, Google OAuth, Airtable PAT,
+# Twilio SID+token, GitHub PATs (classic + fine-grained), Slack bot/user,
+# AWS access keys, Stripe live keys, Connecteam, GHL location+api keys.
+SECRET_REGEX='(sk-ant-api03-[A-Za-z0-9_\-]{80,}'
+SECRET_REGEX+='|AIza[0-9A-Za-z_\-]{35,}'
+SECRET_REGEX+='|GOCSPX-[A-Za-z0-9_\-]{20,}'
+SECRET_REGEX+='|patl?[A-Za-z0-9]{14}\.[A-Za-z0-9]{30,}'
+SECRET_REGEX+='|AC[a-f0-9]{32}'
+SECRET_REGEX+='|ghp_[A-Za-z0-9]{36,}'
+SECRET_REGEX+='|github_pat_[A-Za-z0-9_]{80,}'
+SECRET_REGEX+='|xox[bp]-[A-Za-z0-9\-]{10,}'
+SECRET_REGEX+='|AKIA[0-9A-Z]{16}'
+SECRET_REGEX+='|sk_live_[A-Za-z0-9]{24,}'
+SECRET_REGEX+='|ct_[a-z]{15,}_[a-f0-9]{32}'
+SECRET_REGEX+='|pit-[a-f0-9-]{36}'
+SECRET_REGEX+=')'
+
+if git diff --cached | grep -Pq "$SECRET_REGEX"; then
+  printf '%sBLOCKED:%s staged diff contains what looks like a real API key or token.\n' \
+    "$RED" "$RESET"
   echo "  Move real values to .env (gitignored). Use placeholders in committed files."
   fail=1
 fi

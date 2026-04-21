@@ -5,10 +5,13 @@ services:
     restart: unless-stopped
     env_file:
       - .env
-    ports:
-      - "127.0.0.1:8000:8000"
+    # Tenant data lives at /opt/wc-solns/<tenant>/ inside the container
+    # (the Dockerfile creates that directory and chowns it to the app user).
+    # Keep this aligned with services/tenant_manager.py paths.
     volumes:
       - tenant-data:/opt/wc-solns
+    ports:
+      - "127.0.0.1:8000:8000"
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.dashboard.rule=Host(`dashboard.westcoastautomationsolutions.com`)"

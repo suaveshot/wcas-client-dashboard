@@ -4,13 +4,19 @@ WCAS Client Dashboard  -  FastAPI entrypoint.
 Day 1 scaffold: landing route, healthz, placeholder routes for /activate,
 /api/pipelines, /api/heartbeat, /terms, /privacy. Real auth, tenant
 scoping, and agent wiring ship Day 2-4.
+
+All HTML rendering goes through Jinja2 with auto-escape ON by default.
+No string-concatenated HTML responses, so Day 2+ additions can't accidentally
+introduce XSS when user data starts flowing in.
 """
 
+import os
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
@@ -23,6 +29,8 @@ app = FastAPI(
 )
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -39,17 +47,19 @@ async def healthz() -> JSONResponse:
 
 
 @app.get("/activate", response_class=HTMLResponse)
-async def activate_page() -> HTMLResponse:
-    """Activation flow placeholder. Real chat UI ships Day 3."""
-    return HTMLResponse(
-        "<!doctype html><meta charset='utf-8'>"
-        "<title>Activation · WCAS</title>"
-        "<link rel='stylesheet' href='/static/styles.css'>"
-        "<main style='max-width:720px;margin:96px auto;padding:0 24px;'>"
-        "<h1>Activation flow</h1>"
-        "<p>Coming Day 3: the Opus 4.7 Activation Orchestrator will walk you through "
-        "getting your purchased pipelines live in about 30 minutes.</p>"
-        "</main>"
+async def activate_page(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request,
+        "placeholder.html",
+        {
+            "title": "Activation",
+            "heading": "Activation flow",
+            "body": (
+                "Coming Day 3: the Opus 4.7 Activation Orchestrator will walk "
+                "you through getting your purchased pipelines live in about 30 "
+                "minutes."
+            ),
+        },
     )
 
 
@@ -60,34 +70,44 @@ async def api_pipelines() -> JSONResponse:
 
 
 @app.post("/api/heartbeat")
-async def api_heartbeat(request: Request) -> JSONResponse:
-    """Placeholder. Real shared-secret auth + tenant scope ships Day 2."""
+async def api_heartbeat(
+    request: Request,
+    x_heartbeat_secret: str | None = Header(default=None, alias="X-Heartbeat-Secret"),
+) -> JSONResponse:
+    """
+    Accepts pipeline state pushes from Americal Patrol's PC.
+
+    Day 1: shared-secret check is active. Real tenant resolution + storage
+    ships Day 2. Without the secret (or with a wrong one) this endpoint is
+    closed  -  the repo is public, so we never leave a placeholder open.
+    """
+    expected = os.getenv("HEARTBEAT_SHARED_SECRET", "")
+    if not expected or x_heartbeat_secret != expected:
+        raise HTTPException(status_code=401, detail="unauthorized")
     return JSONResponse({"received": True, "status": "scaffold"})
 
 
 @app.get("/terms", response_class=HTMLResponse)
-async def terms() -> HTMLResponse:
-    """Terms of service. Real content drafted Day 5."""
-    return HTMLResponse(
-        "<!doctype html><meta charset='utf-8'>"
-        "<title>Terms · WCAS Dashboard</title>"
-        "<link rel='stylesheet' href='/static/styles.css'>"
-        "<main style='max-width:720px;margin:96px auto;padding:0 24px;'>"
-        "<h1>Terms of Service</h1>"
-        "<p>Final content shipping Day 5. In plain English, owner to owner.</p>"
-        "</main>"
+async def terms(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request,
+        "placeholder.html",
+        {
+            "title": "Terms",
+            "heading": "Terms of Service",
+            "body": "Final content shipping Day 5. In plain English, owner to owner.",
+        },
     )
 
 
 @app.get("/privacy", response_class=HTMLResponse)
-async def privacy() -> HTMLResponse:
-    """Privacy policy. Real content drafted Day 5."""
-    return HTMLResponse(
-        "<!doctype html><meta charset='utf-8'>"
-        "<title>Privacy · WCAS Dashboard</title>"
-        "<link rel='stylesheet' href='/static/styles.css'>"
-        "<main style='max-width:720px;margin:96px auto;padding:0 24px;'>"
-        "<h1>Privacy Policy</h1>"
-        "<p>Final content shipping Day 5. What we collect, why, and how to export or delete.</p>"
-        "</main>"
+async def privacy(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request,
+        "placeholder.html",
+        {
+            "title": "Privacy",
+            "heading": "Privacy Policy",
+            "body": "Final content shipping Day 5. What we collect, why, and how to export or delete.",
+        },
     )

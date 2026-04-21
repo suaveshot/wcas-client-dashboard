@@ -1,5 +1,9 @@
 """Day 1 smoke tests — landing renders, healthz returns ok, placeholder routes respond."""
 
+import os
+
+os.environ.setdefault("HEARTBEAT_SHARED_SECRET", "test-secret-not-real")
+
 from fastapi.testclient import TestClient
 
 from dashboard_app.main import app
@@ -34,11 +38,27 @@ def test_pipelines_api_placeholder():
     assert body["status"] == "scaffold"
 
 
-def test_heartbeat_endpoint_placeholder():
+def test_heartbeat_requires_secret():
+    # No header at all -> 401
     r = client.post("/api/heartbeat", json={"pipeline_id": "test"})
+    assert r.status_code == 401
+
+    # Wrong header -> 401
+    r = client.post(
+        "/api/heartbeat",
+        json={"pipeline_id": "test"},
+        headers={"X-Heartbeat-Secret": "wrong"},
+    )
+    assert r.status_code == 401
+
+    # Correct header -> 200
+    r = client.post(
+        "/api/heartbeat",
+        json={"pipeline_id": "test"},
+        headers={"X-Heartbeat-Secret": os.environ["HEARTBEAT_SHARED_SECRET"]},
+    )
     assert r.status_code == 200
-    body = r.json()
-    assert body["received"] is True
+    assert r.json()["received"] is True
 
 
 def test_terms_page():
