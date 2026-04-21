@@ -11,7 +11,7 @@ def test_landing_renders():
     r = client.get("/")
     assert r.status_code == 200
     assert "WestCoast Automation Solutions" in r.text
-    assert "DM Serif Display" in r.text  # font preload present
+    assert "DM+Serif+Display" in r.text  # Google Fonts link uses plus-encoding
 
 
 def test_healthz_ok():
