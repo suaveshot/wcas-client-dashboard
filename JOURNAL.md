@@ -442,3 +442,74 @@ The only cross-tenant read path is the `require_tenant` dependency itself. It re
 
 With auth + tenant isolation locked in, Day 3 builds the Activation Orchestrator Managed Agent and its 10 tools (confirm_company_facts, activate_pipeline, request_credential, set_schedule, set_preference, set_timezone, capture_baseline, set_goals, write_kb_entry, mark_activation_complete). First-touch infrastructure that today's block made possible: every Opus call goes through `cost_tracker.record_call()` for per-tenant tracking, every prompt string and log line passes through `scrubber.scrub()`, every read-side API call resolves tenant via the signed session cookie.
 
+---
+
+## Entry 9  -  Day 2 build, afternoon: Opus wrapper + home wiring + recommendations quality
+**2026-04-22 13:00 PDT to 15:45 PDT**
+
+Sam's afternoon direction was three-part: (1) wire the Home template to real data while preserving the design intent, (2) build the Opus wrapper and make the first real model call, (3) answer a question that had been nagging him since the plan ink dried: *"I want Opus to make solid recommendations on client's systems based on data. The recommendations should come from evidence that it will in fact work. Making bad calls here would not be good for business."*
+
+The last point was the most important one, because it's the part that determines whether this product is a toy or a real agency tool. Bad recs erode the trust the whole dashboard is built on. Good ones compound. So before wiring any model call, I designed the guardrail layer that every recommendation will be filtered through.
+
+### What got built
+
+**`services/opus.py`**  -  the single path to Anthropic's Messages API. Enforces the `cost_tracker.should_allow(tenant_id)` budget gate, records the call's input + output tokens and USD to the cost log, scrubs the note for PII, and returns a normalized `OpusResult` dataclass. Default model is Haiku 4.5 in dev; demo video recording flips to Opus 4.7 via env. No retries, no streaming, no caching yet  -  those ship when a specific callsite needs them, not as speculative scaffolding.
+
+**`services/guardrails.py`**  -  two functions, one seam for the whole product:
+- `review_outbound(channel, content, metadata)` runs on every outbound before send. Strips em dashes (brand voice rule), rejects vendor-name leaks as brand incidents (not typos), optionally scans for PII. Returns a `ReviewResult(decision, content, reasons)`. Hackathon-scope behavior is mechanical; post-hackathon a tight Opus call handles tone + claims review.
+- `review_recommendation(tenant_id, rec)` runs before a rec renders on a client's screen. Enforces the ADR-024 schema: structured evidence required, confidence >= 6, proposed_tool in safe allowlist, no absolute language, no ">=100% lift" impact claims, no vendor leaks. Fails closed  -  unsure = revise or reject, never approve.
+
+**`services/recommendations.py`**  -  the canonical rec schema and composer. `finalize()` attaches a stable id, runs the guardrail, and stamps `draft=true` + a reason when guardrail refuses. Draft recs flow to Sam's admin inbox instead of the client screen. The schema locks nine required fields: headline, reason, proposed_tool, proposed_args, impact (metric / estimate / unit / calculation), confidence (1-10), reversibility (instant / session / slow / permanent), evidence list, role_slug.
+
+**`services/home_context.py`**  -  the composer that turns tenant state into the Home template's Jinja context. Reads `telemetry.pipelines_for(tenant_id)`, normalizes each heartbeat row into a role card (state + grade derived from status + age), picks the most urgent errored or overdue role for the attention banner (single, never stacked), and writes an honest narrative: *"Live telemetry from N roles. M are running on schedule."* for live tenants, *"Your roles are connected and queued for their first run."* for brand-new tenants. Hero stats render placeholders with verified-tips that explain when each number wakes up (*"Baseline capture populates this after the first week of runs"*) instead of zeros that suggest broken data.
+
+**`api/ask.py`**  -  first real Opus call in the product. POST `/api/ask` with `{role_slug, question}`, Depends(require_tenant) resolves the caller's tenant from the signed cookie, the pipeline's most recent heartbeat snapshot is fetched, a short grounded prompt is built, Opus returns a 1-3 sentence answer, the answer passes through `review_outbound` before the JSON response lands. Budget-exceeded raises 429; no-snapshot returns a calm "try again after next run"; model unavailable (missing key in local dev) returns "assistant is offline, refresh in a minute." Graceful every way.
+
+**`main.py`**  -  `/dashboard` now composes its Jinja context from `home_context.build(tenant_id, owner_name)` when a session cookie is present. PREVIEW_MODE=true still routes to the hand-crafted AP mock so the demo video has a reliable 14-role visual  -  two paths, same template.
+
+**Airtable fields added** (via claude.ai Airtable MCP on base `appLAObkCBjDxSQg2`, table `tbl1XVlZJZ8rXAFOz`):
+- `Magic Link Hash` (singleLineText)  -  stores SHA-256 hex of outstanding token
+- `Magic Link Expires` (singleLineText)  -  ISO-8601 UTC expiry
+- `Magic Link Consumed` (checkbox)  -  single-use flag
+- `Tenant ID` (singleLineText)  -  stable slug for /opt/wc-solns/<tenant>/
+
+**`Americal Patrol/shared/push_heartbeat.py`**  -  added `X-Tenant-Id` header to the POST. Server-side `api/heartbeat.py` falls back to `body.tenant_id` for any pipeline versions that haven't been updated yet, so rollout is non-breaking.
+
+### What got verified
+
+- **44 tests pass** (was 31 end of Day 2 AM). New: 10 guardrail tests covering good rec, missing evidence, unsafe tool, low confidence, absolute language, vendor leak, em-dash strip, outbound reject, finalize id + draft, finalize low-confidence; 3 home composer tests covering empty tenant, heartbeat-driven roles, honest placeholder hero stats.
+- **Em-dash check still passes.** Got caught once (literal U+2014 assigned to `_EM_DASH` in guardrails.py), fixed by defining the constant via `chr(0x2014)` so the file itself stays em-dash-free while still detecting the character at runtime.
+- **Vendor-name rejection verified end-to-end.** A rec with "Claude" in the headline gets rejected by `review_recommendation`; a rec that passes gets stamped `draft=false`; an outbound with "Powered by Claude" gets rejected by `review_outbound` with a one-line reason.
+
+### Design-alignment notes for the Home wiring
+
+Two things that mattered to Sam's concern about "make sure all the data will run smoothly with the visual look":
+1. **Every field the template references has a fallback that matches the design intent.** Empty tenant renders a single placeholder role card titled "First run pending" with state=active so the grid layout doesn't collapse to zero items and look broken. Hero stats render `--` instead of `0` because `0` implies the system measured and got zero; `--` + verified-tip text says "we haven't measured yet." Attention banner is singular by design; when multiple roles error, we pick the most urgent one; the rest surface in the roles grid.
+2. **Grade derivation respects the card-state semantics locked in the design plan.** `ok` status with recent run = state `active` + grade `A` + up-trending sparkline. `ok` status >48h stale = state `attention` + grade `C` + flat spark. `error` status < 24h = state `error` + grade `C` + down spark (recoverable). `error` > 24h = state `error` + grade `F` + down spark (stale error). `paused` = state `paused` + grade `None` + flat spark. No card state is left unhandled.
+
+### On the recommendations-quality question  -  the architectural answer
+
+The short version: we don't trust the model blind. We make it show its work. Every rec carries a structured evidence list (not prose that claims evidence; actual `{source, datapoint, value, observed_at}` entries). It carries a confidence score. It proposes a specific tool with specific args, not a vague suggestion. It includes impact math with the calculation shown. A guardrail pass refuses to surface anything that fails those checks.
+
+This does three things:
+1. **Forces Opus to reason structurally.** The prompt schema makes hand-wavy output impossible; the model either cites or doesn't.
+2. **Gives Sam a kill switch that isn't binary.** High-confidence recs surface on the client screen; borderline recs go to his admin inbox for his review; failing recs get discarded with a logged reason he can audit.
+3. **Creates a post-hackathon feedback loop.** Every applied rec gets an outcome review after a configurable window. Win rates per rec type drive an automatic tightening of the confidence threshold. Opus gets more selective over time, in the direction of actually working.
+
+The longer version is ADR-024 in `DECISIONS.md`. It locks the schema so Day 3 + Day 4 can build the actual generator without rediscovering these choices.
+
+### Files changed in this entry
+- `dashboard_app/services/` (4 new files: opus.py, guardrails.py, recommendations.py, home_context.py)
+- `dashboard_app/api/ask.py` (new)
+- `dashboard_app/main.py` (Home now composes real context when authenticated)
+- `Americal Patrol/shared/push_heartbeat.py` (+ `X-Tenant-Id` header)
+- `dashboard_app/api/heartbeat.py` (body.tenant_id fallback)
+- `tests/test_recommendations.py` (new, 10 tests)
+- `tests/test_home_context.py` (new, 3 tests)
+- Airtable Clients table (+ 4 fields: Magic Link Hash, Magic Link Expires, Magic Link Consumed, Tenant ID)
+- ADRs 024 (rec quality), 025 (guardrails seam), 026 (Opus wrapper discipline)
+
+### What Day 3 morning starts with
+
+The Activation Orchestrator Managed Agent and the first full-sized Opus call: a grounded recommendations pass against Sam's real Americal Patrol telemetry. Because the guardrail + schema + cost tracker landed today, tomorrow's work is "write the prompt and let it run" rather than "also design the safety net."
+

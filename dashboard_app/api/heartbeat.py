@@ -36,15 +36,6 @@ async def api_heartbeat(
     if not expected or x_heartbeat_secret != expected:
         raise HTTPException(status_code=401, detail="unauthorized")
 
-    tenant_id = (x_tenant_id or "").strip().lower()
-    if not tenant_id:
-        # Backwards-compat: pre-Day-2 payloads didn't include the header.
-        # Accept but store nothing; return 200 so old pipelines don't alarm.
-        return JSONResponse({"received": True, "stored": False, "status": "no_tenant"})
-
-    if not rate_limit.heartbeat_limiter.allow(tenant_id):
-        raise HTTPException(status_code=429, detail="slow down")
-
     try:
         payload = await request.json()
     except Exception:  # noqa: BLE001  malformed body
@@ -52,6 +43,16 @@ async def api_heartbeat(
 
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="invalid payload")
+
+    # Header is the trusted source; fall back to body.tenant_id for pipelines
+    # that haven't been updated yet. Both get stamped through the same slug
+    # validator in heartbeat_store.write_snapshot.
+    tenant_id = (x_tenant_id or str(payload.get("tenant_id") or "")).strip().lower()
+    if not tenant_id:
+        return JSONResponse({"received": True, "stored": False, "status": "no_tenant"})
+
+    if not rate_limit.heartbeat_limiter.allow(tenant_id):
+        raise HTTPException(status_code=429, detail="slow down")
 
     pipeline_id = str(payload.get("pipeline_id", "")).strip().lower()
     if not pipeline_id:

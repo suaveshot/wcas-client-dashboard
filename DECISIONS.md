@@ -390,4 +390,69 @@ Short crisp entries for each major technical decision. Format: **what, why, alte
 
 ---
 
+## ADR-024  -  Evidence-grounded recommendations: every rec must show its work
+**Date:** 2026-04-22
+**Status:** Accepted, shipped Day 2 PM (architecture), activated Day 4 (generator)
+
+**Decision:** Every recommendation Opus surfaces to a client must carry a structured evidence list, a confidence score (1-10, minimum 6 to display), a named proposed tool from a known-safe allowlist, a quantified impact estimate with its calculation, and a reversibility class. A guardrail layer (`services/guardrails.py:review_recommendation`) enforces this schema before the rec ever renders on a client's screen. Recs that fail any check get stashed as drafts in Sam's admin inbox, never surfaced to the client automatically.
+
+**Why:** Sam's concern, verbatim: *"I want Opus to make solid recommendations on client's systems based on data. The recommendations should come from evidence that it will in fact work. Making bad calls here would not be good for business."* The model is good at language; that does not mean the model is good at finance. Treating Opus as a senior analyst whose work we review is the correct posture. The evidence list is how we make the model show its math.
+
+**Required rec fields:**
+- `headline`, `reason`  -  the plain-English content
+- `proposed_tool` from `{update_tenant_config, queue_pipeline_run, create_activity, schedule_followup, set_schedule, set_preference, write_kb_entry, noop}`
+- `proposed_args`  -  concrete args to the tool (a diff, not a description)
+- `impact`  -  `{metric, estimate, unit, calculation}` where `calculation` is a text proof
+- `confidence`  -  integer 1-10 (threshold 6 by default)
+- `reversibility`  -  `instant | session | slow | permanent`
+- `evidence`  -  list of `{source, datapoint, value, observed_at}` entries, at least one required
+
+**Automatic rejection conditions** (from `guardrails.review_recommendation`):
+- no structured evidence  -  rejected
+- proposed_tool not in safe allowlist  -  rejected
+- confidence below `REC_MIN_CONFIDENCE` (env, default 6)  -  rejected
+- absolute language like "guaranteed", "100% works", "always"  -  rejected
+- unrealistic impact ">=100% lift" claims  -  rejected
+- vendor mentions (Claude / Opus / Anthropic / GPT)  -  rejected
+
+**Why not auto-apply, even for high-confidence recs?** Reversibility is a continuum, not a binary. A 10-second undo on a config change is cheap; a reputation risk from a tone-deaf customer email is not. The Apply button always requires a human click, even when confidence=10. Opus drives the finding, not the decision.
+
+**Post-hackathon extensions:**
+- outcome tracking: after a configurable window per rec type, an Opus pass reads before+after telemetry and writes a win/wash/loss verdict to `dashboard_decisions.jsonl`
+- auto-tightening: if a rec type's 30-day win rate drops below 60%, the guardrail bumps `REC_MIN_CONFIDENCE` for that type
+- "never suggest this again" button: tenant-level rule against a rec pattern
+
+---
+
+## ADR-025  -  Guardrails as a single seam: `review_outbound` + `review_recommendation`
+**Date:** 2026-04-22
+**Status:** Accepted, shipped Day 2 PM (interface + em-dash + vendor rules)
+
+**Decision:** Every piece of content leaving the system passes through `services/guardrails.py`. Two entry points:
+
+- `review_outbound(channel, content, metadata)`  -  called by every pipeline right before a send. Strips em dashes (brand rule), rejects vendor-name leaks as brand incidents (not typos), optionally scans for PII. Returns `ReviewResult(decision, content, reasons)`.
+- `review_recommendation(tenant_id, rec)`  -  called by the recommendation composer before a rec is surfaced. Enforces ADR-024 schema + sanity.
+
+**Why a single seam?** Without it, the brand-voice rule becomes "every developer remembers to strip em dashes," which is how em dashes end up in production. A single choke point means the rule ships once, and every new outbound surface inherits it. The vendor-mention block works the same way.
+
+**Hackathon-scope behavior is mechanical** (regex + literal string checks). Post-hackathon, `review_outbound` becomes a tight Opus call that reviews tone, claims, and brand fit. The function signature is stable so every caller today is future-proof.
+
+**Fail-closed policy:** when unsure, guardrail returns `revise` or `reject`, never `approve`. Cost of a false-positive (Sam reviews a draft) is lower than cost of a false-negative (a client gets a bad email that damages trust).
+
+---
+
+## ADR-026  -  Opus wrapper as the single path to the Messages API
+**Date:** 2026-04-22
+**Status:** Accepted, shipped Day 2 PM
+
+**Decision:** All direct (non-Managed-Agents) Anthropic calls go through `services/opus.py:chat()`. The wrapper enforces the cost-tracker budget gate, records per-call spending with PII-scrubbed notes, and returns a normalized `OpusResult` dataclass so callers don't touch the SDK response shape.
+
+**Why wrap:** budget enforcement + usage tracking are cross-cutting concerns that cannot be optional. A future developer who skips the wrapper and hits `anthropic.messages.create` directly would bypass the $2/tenant cap AND silently drop our only per-tenant cost signal. The wrapper is the seam; the seam is load-bearing.
+
+**Default model:** `claude-haiku-4-5` in dev, `claude-opus-4-7` during demo video recording (toggled by `WCAS_DEFAULT_MODEL` env). Keeps credit burn low during iteration; judges see the Opus calibre during the recorded demo.
+
+**No retries, streaming, or prompt caching yet.** Scope discipline: those ship when the specific callsite needs them, not as a reflexive "best practice" layer. (Aligns with `feedback_plan_focus.md`: don't propose rebuilding what isn't needed.)
+
+---
+
 *More ADRs added as decisions are made during the build.*

@@ -16,11 +16,12 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from .api import ask as ask_api
 from .api import auth as auth_api
 from .api import brand as brand_api
 from .api import heartbeat as heartbeat_api
 from .api import pipelines as pipelines_api
-from .services import errors, tenant_ctx
+from .services import errors, home_context, tenant_ctx
 from .services.tenant_ctx import current_session
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -47,6 +48,7 @@ app.include_router(auth_api.router)
 app.include_router(pipelines_api.router)
 app.include_router(brand_api.router)
 app.include_router(heartbeat_api.router)
+app.include_router(ask_api.router)
 
 
 # --- Exception handlers ------------------------------------------------------
@@ -280,12 +282,24 @@ def _demo_home_context() -> dict:
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request) -> HTMLResponse:
-    """Home surface. Requires an authenticated session unless PREVIEW_MODE is on.
+    """Home surface.
 
-    PREVIEW_MODE=true still works for hackathon demo recording so judges can
-    see the surface without a real magic link. In prod deployment it's off.
+    Real behaviour: session-gated, context built from live telemetry.
+    PREVIEW_MODE=true keeps the Day-1 mock accessible for demo video recording
+    so judges can see the surface without a real magic link.
     """
     sess = current_session(request)
-    if sess is None and os.getenv("PREVIEW_MODE", "false").lower() != "true":
+    preview = os.getenv("PREVIEW_MODE", "false").lower() == "true"
+
+    if sess is None and not preview:
         return RedirectResponse(url="/auth/login", status_code=303)
-    return templates.TemplateResponse(request, "home.html", _demo_home_context())
+
+    if sess is None and preview:
+        # Demo path: use the hand-crafted AP mock for video recording.
+        return templates.TemplateResponse(request, "home.html", _demo_home_context())
+
+    # Real path: compose context from this tenant's live telemetry.
+    tenant_id = sess["tid"]
+    owner = sess.get("em", "")
+    ctx = home_context.build(tenant_id=tenant_id, owner_name=owner, tenant_display="")
+    return templates.TemplateResponse(request, "home.html", ctx)
