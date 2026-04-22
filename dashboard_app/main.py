@@ -22,7 +22,7 @@ from .api import auth as auth_api
 from .api import brand as brand_api
 from .api import heartbeat as heartbeat_api
 from .api import pipelines as pipelines_api
-from .services import errors, home_context, tenant_ctx
+from .services import errors, home_context, role_detail, tenant_ctx
 from .services.tenant_ctx import current_session
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -177,8 +177,25 @@ async def roles_page(request: Request):
     return _sidebar_stub(
         request,
         "Roles",
-        "The detailed per-role surface opens Day 3, with drill-down logs, goal progress, and pause toggles. For now, tap any role card on the home screen to see its live status.",
+        "The all-roles index opens Day 3. For now, tap a role card on your home screen to see its live status and ask a question about it.",
     )
+
+
+@app.get("/roles/{role_slug}", response_class=HTMLResponse)
+async def role_detail_page(request: Request, role_slug: str):
+    import re
+    if not re.match(r"^[a-z0-9][a-z0-9_-]{0,63}$", role_slug):
+        raise HTTPException(status_code=404, detail="role not found")
+
+    sess = current_session(request)
+    preview = os.getenv("PREVIEW_MODE", "false").lower() == "true"
+
+    if sess is None and not preview:
+        return RedirectResponse(url="/auth/login", status_code=303)
+
+    tenant_id = sess["tid"] if sess else "americal_patrol"
+    ctx = role_detail.build(tenant_id=tenant_id, role_slug=role_slug)
+    return templates.TemplateResponse(request, "role_detail.html", ctx)
 
 
 @app.get("/activity", response_class=HTMLResponse)

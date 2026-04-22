@@ -129,6 +129,21 @@ def test_unknown_api_route_returns_json_404():
     assert "error" in body
 
 
+def test_role_detail_renders_empty_state_without_heartbeats(tmp_path, monkeypatch):
+    import os as _os
+    _os.environ["PREVIEW_MODE"] = "true"
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    r = client.get("/roles/patrol", follow_redirects=False)
+    assert r.status_code == 200
+    assert "Morning Reports" in r.text or "Patrol" in r.text
+    assert "queued for its first run" in r.text
+
+
+def test_role_detail_rejects_unsafe_slug():
+    r = client.get("/roles/..%2Fetc%2Fpasswd", follow_redirects=False)
+    assert r.status_code == 404
+
+
 def test_sidebar_stubs_render_when_previewing():
     import os as _os
     _os.environ["PREVIEW_MODE"] = "true"
