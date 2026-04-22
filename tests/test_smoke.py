@@ -115,6 +115,34 @@ def test_privacy_page():
     assert "Privacy" in r.text
 
 
+def test_unknown_route_returns_branded_404_html_for_humans():
+    r = client.get("/does-not-exist", follow_redirects=False)
+    assert r.status_code == 404
+    assert "Nothing here" in r.text
+    assert "application/json" not in r.headers.get("content-type", "")
+
+
+def test_unknown_api_route_returns_json_404():
+    r = client.get("/api/does-not-exist", follow_redirects=False)
+    assert r.status_code == 404
+    body = r.json()
+    assert "error" in body
+
+
+def test_sidebar_stubs_render_when_previewing():
+    import os as _os
+    _os.environ["PREVIEW_MODE"] = "true"
+    for path, needle in [
+        ("/roles", "Roles"),
+        ("/activity", "Activity"),
+        ("/recommendations", "Recommendations"),
+        ("/settings", "Settings"),
+    ]:
+        r = client.get(path, follow_redirects=False)
+        assert r.status_code == 200, path
+        assert needle in r.text
+
+
 def test_auth_login_page_renders():
     r = client.get("/auth/login")
     assert r.status_code == 200

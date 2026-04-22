@@ -15,6 +15,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .api import ask as ask_api
 from .api import auth as auth_api
@@ -54,8 +55,8 @@ app.include_router(ask_api.router)
 # --- Exception handlers ------------------------------------------------------
 
 
-@app.exception_handler(HTTPException)
-async def http_exception_handler(request: Request, exc: HTTPException):
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     # JSON clients (/api/*) get a JSON body; humans get the branded page.
     if request.url.path.startswith("/api/"):
         return JSONResponse({"error": exc.detail}, status_code=exc.status_code)
@@ -154,6 +155,56 @@ async def privacy(request: Request) -> HTMLResponse:
             "heading": "Privacy Policy",
             "body": "Final content shipping Day 5. What we collect, why, and how to export or delete.",
         },
+    )
+
+
+# --- Sidebar nav stubs (full surfaces ship Day 3-4) --------------------------
+
+
+def _sidebar_stub(request: Request, title: str, body: str) -> HTMLResponse:
+    sess = current_session(request)
+    if sess is None and os.getenv("PREVIEW_MODE", "false").lower() != "true":
+        return RedirectResponse(url="/auth/login", status_code=303)
+    return templates.TemplateResponse(
+        request,
+        "placeholder.html",
+        {"title": title, "heading": title, "body": body},
+    )
+
+
+@app.get("/roles", response_class=HTMLResponse)
+async def roles_page(request: Request):
+    return _sidebar_stub(
+        request,
+        "Roles",
+        "The detailed per-role surface opens Day 3, with drill-down logs, goal progress, and pause toggles. For now, tap any role card on the home screen to see its live status.",
+    )
+
+
+@app.get("/activity", response_class=HTMLResponse)
+async def activity_page(request: Request):
+    return _sidebar_stub(
+        request,
+        "Activity",
+        "The full transparency feed with 10-second undo on every automated action ships Day 3. The six most recent events already render at the bottom of your home screen.",
+    )
+
+
+@app.get("/recommendations", response_class=HTMLResponse)
+async def recommendations_page(request: Request):
+    return _sidebar_stub(
+        request,
+        "Recommendations",
+        "Goal-anchored recommendations open Day 4, after a full week of telemetry. Each suggestion will come with the evidence, impact math, and an Apply button with a 10-second undo chip.",
+    )
+
+
+@app.get("/settings", response_class=HTMLResponse)
+async def settings_page(request: Request):
+    return _sidebar_stub(
+        request,
+        "Settings",
+        "Timezone, tone, do-not-disturb windows, goal editing, brand overrides, and notification preferences are all on the Day 3 agenda.",
     )
 
 
