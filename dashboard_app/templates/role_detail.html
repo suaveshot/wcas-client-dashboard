@@ -85,11 +85,28 @@
                     </div>
                     {% endif %}
 
-                    {% if log_tail %}
-                    <div class="ap-role-detail__logs" aria-label="Recent log">
-                        <h2 class="ap-role-detail__logs-title">Recent log</h2>
-                        <pre class="ap-role-detail__logs-pre">{{ log_tail }}</pre>
+                    {% if timeline %}
+                    <div class="ap-role-detail__timeline" aria-label="What happened on the last run">
+                        <h2 class="ap-role-detail__timeline-title">What happened on the last run</h2>
+                        <ol class="ap-timeline">
+                            {% for event in timeline %}
+                            <li class="ap-timeline__item ap-timeline__item--{{ event.level }}">
+                                <span class="ap-timeline__dot" aria-hidden="true"></span>
+                                <div class="ap-timeline__body">
+                                    <span class="ap-timeline__time">{{ event.time }}</span>
+                                    <span class="ap-timeline__message">{{ event.message }}</span>
+                                </div>
+                            </li>
+                            {% endfor %}
+                        </ol>
                     </div>
+                    {% endif %}
+
+                    {% if log_tail %}
+                    <details class="ap-role-detail__logs-details">
+                        <summary class="ap-role-detail__logs-summary">Show the raw technical log</summary>
+                        <pre class="ap-role-detail__logs-pre">{{ log_tail }}</pre>
+                    </details>
                     {% endif %}
                 {% else %}
                     <p class="ap-role-detail__empty">

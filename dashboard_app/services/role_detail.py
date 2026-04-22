@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import heartbeat_store, home_context
+from . import heartbeat_store, home_context, log_timeline
 
 
 def _find_snapshot(tenant_id: str, role_slug: str) -> dict | None:
@@ -38,6 +38,7 @@ def build(tenant_id: str, role_slug: str) -> dict[str, Any]:
             "summary": "",
             "received_at": "",
             "state_rows": [],
+            "timeline": [],
             "log_tail": "",
         }
 
@@ -53,6 +54,9 @@ def build(tenant_id: str, role_slug: str) -> dict[str, Any]:
             if isinstance(v, (str, int, float, bool)):
                 state_rows.append({"label": k.replace("_", " ").title(), "value": str(v)})
 
+    raw_tail = (payload.get("log_tail") or "")[:4000]
+    timeline = log_timeline.parse(raw_tail, max_events=12)
+
     return {
         "role_slug": role_slug,
         "role_name": display_name,
@@ -63,5 +67,6 @@ def build(tenant_id: str, role_slug: str) -> dict[str, Any]:
         "summary": payload.get("summary") or "",
         "received_at": snap.get("received_at", ""),
         "state_rows": state_rows[:16],  # cap to avoid blowing up the card
-        "log_tail": (payload.get("log_tail") or "")[:4000],
+        "timeline": [{"time": e.time_human, "level": e.level, "message": e.message} for e in timeline],
+        "log_tail": raw_tail,
     }

@@ -2079,12 +2079,96 @@ body.ap-focus .ap-shell__main { width: 100%; }
   color: var(--ink);
 }
 
-.ap-role-detail__logs-title {
+.ap-role-detail__timeline-title {
   font-family: var(--font-display);
   font-weight: 400;
-  font-size: 20px;
+  font-size: 22px;
   color: var(--ink);
-  margin: 0 0 var(--s-3);
+  margin: 0 0 var(--s-4);
+}
+
+.ap-timeline {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  position: relative;
+  padding-left: var(--s-5);
+}
+
+.ap-timeline::before {
+  content: "";
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 6px;
+  width: 2px;
+  background: var(--border-soft);
+}
+
+.ap-timeline__item {
+  position: relative;
+  padding: var(--s-2) 0 var(--s-3);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+}
+
+.ap-timeline__dot {
+  position: absolute;
+  left: calc(-1 * var(--s-5) + 1px);
+  top: 12px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--ink-faint);
+  border: 2px solid var(--bg);
+  box-shadow: 0 0 0 1px var(--border);
+}
+
+.ap-timeline__item--success .ap-timeline__dot { background: var(--ok); }
+.ap-timeline__item--warn    .ap-timeline__dot { background: #D98B2E; }
+.ap-timeline__item--error   .ap-timeline__dot { background: var(--warn); }
+.ap-timeline__item--start   .ap-timeline__dot { background: var(--accent); }
+.ap-timeline__item--info    .ap-timeline__dot { background: var(--ink-faint); }
+
+.ap-timeline__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+
+.ap-timeline__time {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--ink-muted);
+  letter-spacing: 0.02em;
+}
+
+.ap-timeline__message {
+  font-size: 15px;
+  line-height: 1.45;
+  color: var(--ink);
+}
+
+.ap-timeline__item--error .ap-timeline__message {
+  color: var(--warn);
+}
+
+.ap-role-detail__logs-details {
+  margin-top: var(--s-3);
+}
+
+.ap-role-detail__logs-summary {
+  font-size: 13px;
+  color: var(--ink-muted);
+  cursor: pointer;
+  padding: var(--s-2) 0;
+  user-select: none;
+}
+
+.ap-role-detail__logs-summary:hover {
+  color: var(--ink-soft);
 }
 
 .ap-role-detail__logs-pre {
@@ -2098,6 +2182,7 @@ body.ap-focus .ap-shell__main { width: 100%; }
   overflow-x: auto;
   white-space: pre;
   max-height: 360px;
+  margin: var(--s-3) 0 0;
 }
 
 .ap-role-detail__ask {
