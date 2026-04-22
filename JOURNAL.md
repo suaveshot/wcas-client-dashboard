@@ -293,7 +293,7 @@ Day 2 still starts with auth + heartbeat receiver + pipeline grid. The admin vie
 
 ---
 
-## Entry 5  -  Day 1 evening, design lock-in
+## Entry 6  -  Day 1 evening, design lock-in
 **2026-04-21 17:00 PDT to 18:45 PDT**
 
 Sam's ask was specific: "continue the work on the client dashboard, but focus on the design, what exactly the dashboard looks like, the different buttons, navigation, everything the client actually sees. Go ahead and do a deep research on the different kinds of dashboards that different businesses may have across all different kinds of industries, service industries, product industries, everything. Pull the good parts and the bad parts and mash them all together to create one very polished, user friendly dashboard that just makes sense." The goal: take Day 1's scaffolded empty landing page and lock the design of every client-facing surface at pixel fidelity so Days 2-5 become execution rather than design debate.
@@ -332,7 +332,7 @@ Day 1 went from acceptance announcement at 8:30 AM to a public-HTTPS dashboard l
 
 ---
 
-## Entry 6  -  Day 1 evening, first client-facing surface built
+## Entry 7  -  Day 1 evening, first client-facing surface built
 **2026-04-21 18:45 PDT to 20:15 PDT**
 
 Sam's direction after the plan approval: "if you're confident in this plan go ahead and execute. If not, see what needs to be worked on more and let's refine that. Also, make sure to be logging this in the journal for the project." I was confident. So instead of waiting for Day 2 morning, I extended the Day 1 scaffold with the full visual shell plus the Home surface's 6-row layout rendering static mock data, so tomorrow morning's build session starts at "wire real data" instead of "set up the layout."

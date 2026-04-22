@@ -87,3 +87,21 @@ def test_no_em_dashes_in_source():
                 continue  # this file references the char for the check
             text = path.read_text(encoding="utf-8", errors="replace")
             assert em_dash not in text, f"em dash found in {path}"
+
+
+def test_no_llm_vendor_in_rendered_html():
+    """
+    Brand rule: client-facing HTML must never mention Claude, Opus, Anthropic,
+    or other LLM vendor names. The spark glyph + generic verbs carry the
+    assistant identity. Internal docs (plan files, READMEs) are exempt and
+    live outside the routes hit here.
+    """
+    os.environ["PREVIEW_MODE"] = "true"  # enable /dashboard for the scan
+    banned = ("Claude", "Opus 4.7", "Opus 4.6", "Anthropic", "OpenAI", "GPT-")
+
+    routes = ["/", "/activate", "/terms", "/privacy", "/dashboard"]
+    for route in routes:
+        r = client.get(route)
+        assert r.status_code == 200, f"{route} returned {r.status_code}"
+        for word in banned:
+            assert word not in r.text, f"{word!r} leaked into rendered HTML at {route}"
