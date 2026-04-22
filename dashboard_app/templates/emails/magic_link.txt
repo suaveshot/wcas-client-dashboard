@@ -1,0 +1,11 @@
+WestCoast Automation Solutions
+
+Ready when you are.
+
+Tap the link below and you're in. The link works once, for the next {{ ttl_minutes }} minutes.
+
+{{ link_url }}
+
+Didn't ask for this? Ignore the email and the link expires on its own.
+
+Questions: salarcon@americalpatrol.com

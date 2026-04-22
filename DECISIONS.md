@@ -322,4 +322,72 @@ Short crisp entries for each major technical decision. Format: **what, why, alte
 
 ---
 
+## ADR-019  -  Magic-link auth with hashed-token Airtable storage
+**Date:** 2026-04-22
+**Status:** Accepted, shipped Day 2 AM
+
+**Decision:** Auth uses a one-hour single-use magic link. The plaintext token is only ever held by the client's email client and the one HTTP request that redeems it; Airtable stores only the SHA-256 hash of the outstanding token plus its expiry and a consumed flag. Redeeming it performs a constant-time compare (`hmac.compare_digest`), writes consumed=True, clears the hash, and issues a signed session cookie.
+
+**Why not password auth?** Passwords are a liability for a small-shop product: credential stuffing, password resets, breached-hash rotation, and "forgot my password" support tickets. Owner-operators have one job and it's not remembering another password.
+
+**Why hash the token in Airtable?** If an Airtable row export leaks (screen-shared support call, accidental copy, compromised PAT), the attacker still can't log in  -  they only see the hash, and we compare against it with a constant-time check. The plaintext token is high-entropy enough that brute-forcing the hash is impractical within the 1-hour window.
+
+**Why SHA-256 and not bcrypt/argon2?** The tokens are random with 256 bits of entropy and single-use within 60 minutes; the attack is not "break the hash" but "exhaust the hash space during the window." Offline cracking of a hashed high-entropy single-use token isn't meaningfully slowed by a slow hash. SHA-256 gets us verifiable fixed-length hex storage without adding a dependency.
+
+**Neutral-response privacy:** `/auth/request` always redirects to the "check your inbox" page, even for unknown emails and even when Airtable is misconfigured or down. An attacker can't enumerate which emails exist in the Clients table.
+
+---
+
+## ADR-020  -  Session cookie: itsdangerous, HttpOnly+SameSite=Strict+Secure, 24h rolling
+**Date:** 2026-04-22
+**Status:** Accepted, shipped Day 2 AM
+
+**Decision:** Successful magic-link redemption issues an `itsdangerous.URLSafeTimedSerializer` signed cookie with salt `wcas-session-v1`, max_age=86400, HttpOnly, SameSite=Strict, Secure (when `PRODUCTION=true`). The cookie payload is `{"tid": tenant_id, "em": email, "rl": role}`  -  the minimum needed for middleware to resolve a request to a tenant.
+
+**Why a signed cookie and not a server-side session store?** One container, no Redis. We don't have a session-write bottleneck problem; we have a "make sure the signature holds" problem. itsdangerous is a 50KB dep that's already in requirements for FastAPI utilities.
+
+**Why SameSite=Strict over Lax?** The dashboard is a single-origin SPA with no cross-site POSTs that need to carry the session (the only inbound write from another origin is `/api/heartbeat`, which uses a shared secret header, not the cookie). Strict eliminates the whole CSRF class for this week; Lax would leave us debating edge cases.
+
+**Why no session-side invalidation list yet?** Hackathon scope: one container, small number of sessions. If a token is leaked, we can invalidate all sessions by rotating `SESSION_SECRET`. Post-hackathon adds a per-session id + server-side revocation list.
+
+---
+
+## ADR-021  -  Rate limiting: in-process sliding window with two buckets
+**Date:** 2026-04-22
+**Status:** Accepted, shipped Day 2 AM
+
+**Decision:** A tiny threading-lock + deque sliding-window limiter protects two endpoints: `/auth/request` at 5 events per 15 minutes per email (stops email-bombing a known address), and `/api/heartbeat` at 120 events per minute per tenant (stops a stolen shared secret from flooding snapshot storage). Single-process; when we scale past one container we'll swap to Redis or Cloudflare rate-limit rules.
+
+**Why in-process and not Nginx?** Our deploy is Caddy in front of one container; Caddy rate-limiting is available but per-IP, not per-email or per-tenant. The attacker dimension that matters here is "spray one known email from many IPs" for the login flow, and "one stolen secret floods storage" for the heartbeat. IP-level limiting is the wrong axis.
+
+**Why not a library like slowapi?** We avoided the dependency weight for 40 lines of code. When we need multi-container sync, a library with a Redis backend earns its inclusion.
+
+---
+
+## ADR-022  -  PII scrubber: redact by pattern before any log write
+**Date:** 2026-04-22
+**Status:** Accepted, shipped Day 2 AM
+
+**Decision:** Every string that gets written to `dashboard_decisions.jsonl`, to the cost tracker log, or to any future observability sink passes through `services.scrubber.scrub()` first. Patterns redact emails, phones, dollar amounts, and common secret prefixes (`sk-ant-api03-`, `pat...`, `ghp_`, `ghs_`). Prod ALWAYS scrubs; `DEBUG_LOG_PROMPTS=true` disables scrubbing for dev only.
+
+**Why conservative patterns (false-positive-prone)?** Over-redaction is correct behavior here. A phone number that looks like a timestamp is fine to redact; an email hiding inside prose that isn't caught and ends up in a log dump is a data-protection failure. We optimize for zero PII leaks at the cost of some `[phone]` noise in logs when a pattern matches an unrelated 10-digit sequence.
+
+**Why not structured logging?** Long-term, yes. For the hackathon, the scrubber is a single seam that covers the existing JSONL-append log paths without rewriting every call site.
+
+---
+
+## ADR-023  -  Cost tracker: JSONL per call, dev + tenant caps, unknown-model fallback to Sonnet-tier
+**Date:** 2026-04-22
+**Status:** Accepted, shipped Day 2 AM
+
+**Decision:** Every Anthropic Messages-API or Managed-Agents call passes through `cost_tracker.record_call(tenant_id, model, in_tok, out_tok, kind)` which appends one JSON line to `/opt/wc-solns/_platform/cost_log.jsonl`. Two gates: `DAILY_DEV_CAP` across all tenants (default $20) and `DAILY_TENANT_CAP` per tenant (default $2). `should_allow(tenant_id)` returns (False, reason) when either cap is hit, and callers surface a calm "budget reached today" message instead of crashing.
+
+**Why JSONL and not SQLite?** JSONL is append-only with no lock contention across threads, easy to grep, easy to re-ingest into whatever analytics tool ships post-hackathon. One container, one process; SQLite's transactional story isn't needed yet.
+
+**Why Sonnet-tier pricing as the unknown-model fallback?** If a new model name lands between my knowledge and the caller's runtime, under-counting its cost would mask the spend. Over-counting by pricing it as Sonnet is the conservative error  -  we'll stop sooner on a budget breach, not later.
+
+**Why cap at $20 dev / $2 tenant?** The $500 hackathon credit budget split across 6 days is ~$83/day. $20 is a quarter of that  -  tight enough to fail loud on a runaway loop during dev, loose enough not to kick in during normal activity. $2 per tenant is set so that 10 active tenants at cap is still below the daily dev cap (10 * $2 = $20), keeping the math coherent.
+
+---
+
 *More ADRs added as decisions are made during the build.*

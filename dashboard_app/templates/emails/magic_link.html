@@ -1,0 +1,68 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Your dashboard sign-in link</title>
+</head>
+<body style="margin:0; padding:0; background:#FBFAF7; font-family: 'DM Sans', system-ui, -apple-system, 'Segoe UI', sans-serif; color:#0F2A44;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#FBFAF7;">
+    <tr>
+        <td align="center" style="padding:40px 20px;">
+            <table role="presentation" width="560" cellpadding="0" cellspacing="0" border="0" style="background:#FFFFFF; border:1px solid #E8E1D4; border-radius:16px; overflow:hidden;">
+                <tr>
+                    <td style="padding:32px 40px 8px 40px;">
+                        <p style="margin:0 0 4px 0; font-size:12px; letter-spacing:0.08em; text-transform:uppercase; color:#6B7280;">
+                            WestCoast Automation Solutions
+                        </p>
+                        <h1 style="margin:0; font-family:'DM Serif Display', Georgia, serif; font-size:30px; line-height:1.2; color:#0F2A44;">
+                            Ready when you are
+                        </h1>
+                    </td>
+                </tr>
+                <tr>
+                    <td style="padding:16px 40px 8px 40px; font-size:16px; line-height:1.55; color:#3D4A5C;">
+                        <p style="margin:0 0 16px 0;">
+                            Tap the button below and you're in. The link works once, for the next {{ ttl_minutes }} minutes.
+                        </p>
+                    </td>
+                </tr>
+                <tr>
+                    <td align="center" style="padding:8px 40px 24px 40px;">
+                        <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+                            <tr>
+                                <td bgcolor="#E97B2E" style="border-radius:8px;">
+                                    <a href="{{ link_url }}"
+                                       style="display:inline-block; padding:14px 28px; font-family:'DM Sans', system-ui, sans-serif; font-weight:600; font-size:16px; color:#FFFFFF; text-decoration:none; border-radius:8px;">
+                                        Open {{ tenant_display }}
+                                    </a>
+                                </td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+                <tr>
+                    <td style="padding:0 40px 32px 40px; font-size:14px; line-height:1.55; color:#6B7280;">
+                        <p style="margin:0 0 12px 0;">
+                            If the button doesn't work, paste this into your browser:
+                        </p>
+                        <p style="margin:0; word-break:break-all; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background:#F4EFE6; padding:12px 14px; border-radius:8px; color:#0F2A44;">
+                            {{ link_url }}
+                        </p>
+                    </td>
+                </tr>
+                <tr>
+                    <td style="padding:20px 40px; background:#F4EFE6; font-size:13px; line-height:1.55; color:#6B7280; border-top:1px solid #E8E1D4;">
+                        <p style="margin:0 0 6px 0;">
+                            Didn't ask for this? You can ignore the email. The link expires on its own.
+                        </p>
+                        <p style="margin:0;">
+                            Questions: <a href="mailto:salarcon@americalpatrol.com" style="color:#0F2A44;">salarcon@americalpatrol.com</a>
+                        </p>
+                    </td>
+                </tr>
+            </table>
+        </td>
+    </tr>
+</table>
+</body>
+</html>

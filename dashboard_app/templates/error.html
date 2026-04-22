@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Something went wrong · WCAS Client Dashboard</title>
+    <meta name="robots" content="noindex">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/styles.css?v=20260422">
+</head>
+<body>
+<main class="landing">
+    <span class="landing__eyebrow">WestCoast Automation Solutions</span>
+    <h1>That didn't work</h1>
+    <p class="landing__lead">
+        We hit a snag loading that page. It's on us, not you. If you
+        reach out, mention this reference so Sam can look it up:
+    </p>
+    <p style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 18px; background: var(--bg-alt); padding: 12px 16px; border-radius: 8px; display: inline-block;">
+        ref <strong>{{ error_id }}</strong>
+    </p>
+
+    <div class="landing__meta" style="margin-top:32px;">
+        <p>Fastest fix: email <a href="mailto:salarcon@americalpatrol.com?subject=Dashboard%20error%20{{ error_id }}">salarcon@americalpatrol.com</a>.</p>
+        <p><a href="/">Back to landing</a></p>
+    </div>
+</main>
+</body>
+</html>

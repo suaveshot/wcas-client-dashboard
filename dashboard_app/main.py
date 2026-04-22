@@ -1,27 +1,29 @@
 """
 WCAS Client Dashboard  -  FastAPI entrypoint.
 
-Day 1 scaffold: landing route, healthz, placeholder routes for /activate,
-/api/pipelines, /api/heartbeat, /terms, /privacy. Real auth, tenant
-scoping, and agent wiring ship Day 2-4.
-
-Day 1 evening: added /dashboard preview route rendering the full 6-row
-Home layout with static mock data. Gated behind PREVIEW_MODE=true so
-the public repo deploy never exposes a fake-data screen. Magic-link
-auth ships Day 2 and replaces the env gate with a real session check.
-
-All HTML rendering goes through Jinja2 with auto-escape ON by default.
-No string-concatenated HTML responses, so Day 2+ additions can't accidentally
-introduce XSS when user data starts flowing in.
+Day 2 added: magic-link auth, signed session cookie, tenant-resolving
+middleware, global exception handler, real /api/pipelines + /api/brand,
+tenant-scoped heartbeat receiver. Day 1 preview route stays for demo.
 """
 
+import logging
 import os
 from pathlib import Path
 
-from fastapi import FastAPI, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+
+from .api import auth as auth_api
+from .api import brand as brand_api
+from .api import heartbeat as heartbeat_api
+from .api import pipelines as pipelines_api
+from .services import errors, tenant_ctx
+from .services.tenant_ctx import current_session
+
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
@@ -30,27 +32,138 @@ TEMPLATES_DIR = APP_DIR / "templates"
 app = FastAPI(
     title="WCAS Client Dashboard",
     description="Agency-level client activation + live automation telemetry.",
-    version="0.1.0",
+    version="0.2.0",
 )
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
+auth_api.attach_templates(templates)
+
+# Session middleware runs on every request and attaches request.state.session.
+app.middleware("http")(tenant_ctx.resolve_session_middleware)
+
+app.include_router(auth_api.router)
+app.include_router(pipelines_api.router)
+app.include_router(brand_api.router)
+app.include_router(heartbeat_api.router)
+
+
+# --- Exception handlers ------------------------------------------------------
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    # JSON clients (/api/*) get a JSON body; humans get the branded page.
+    if request.url.path.startswith("/api/"):
+        return JSONResponse({"error": exc.detail}, status_code=exc.status_code)
+    if exc.status_code == 401:
+        return RedirectResponse(url="/auth/login", status_code=303)
+    if exc.status_code == 404:
+        return templates.TemplateResponse(
+            request,
+            "placeholder.html",
+            {
+                "title": "Not found",
+                "heading": "Nothing here",
+                "body": "That page moved or never existed. Head back home and try again.",
+            },
+            status_code=404,
+        )
+    # For other HTTP errors surface a minimal plain page.
+    return HTMLResponse(f"<h1>{exc.status_code}</h1><p>{exc.detail}</p>", status_code=exc.status_code)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    return JSONResponse({"error": "invalid request", "detail": exc.errors()}, status_code=422)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    error_id = errors.new_error_id()
+    errors.log_error(error_id, exc, request.url.path)
+    if request.url.path.startswith("/api/"):
+        return JSONResponse(
+            {"error": "internal error", "error_id": error_id},
+            status_code=500,
+        )
+    return templates.TemplateResponse(
+        request, "error.html", {"error_id": error_id}, status_code=500
+    )
+
+
+# --- Public routes -----------------------------------------------------------
 
 
 @app.get("/", response_class=HTMLResponse)
 async def landing(request: Request) -> HTMLResponse:
-    """Public landing  -  magic link required to access dashboard routes."""
+    """Public landing. Authenticated users are bounced to their dashboard."""
+    sess = current_session(request)
+    if sess:
+        target = "/admin" if sess.get("rl") == "admin" else "/dashboard"
+        return RedirectResponse(url=target, status_code=303)
     index_path = STATIC_DIR / "index.html"
     return HTMLResponse(index_path.read_text(encoding="utf-8"))
+
+
+@app.get("/healthz")
+async def healthz() -> JSONResponse:
+    """Container health probe. Docker + UptimeRobot hit this."""
+    return JSONResponse({"status": "ok", "version": app.version})
+
+
+@app.get("/activate", response_class=HTMLResponse)
+async def activate_page(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request,
+        "placeholder.html",
+        {
+            "title": "Activation",
+            "heading": "Activation flow",
+            "body": (
+                "Coming Day 3: your Activation Orchestrator walks you through "
+                "getting your purchased pipelines live in about 30 minutes."
+            ),
+        },
+    )
+
+
+@app.get("/terms", response_class=HTMLResponse)
+async def terms(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request,
+        "placeholder.html",
+        {
+            "title": "Terms",
+            "heading": "Terms of Service",
+            "body": "Final content shipping Day 5. In plain English, owner to owner.",
+        },
+    )
+
+
+@app.get("/privacy", response_class=HTMLResponse)
+async def privacy(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request,
+        "placeholder.html",
+        {
+            "title": "Privacy",
+            "heading": "Privacy Policy",
+            "body": "Final content shipping Day 5. What we collect, why, and how to export or delete.",
+        },
+    )
+
+
+# --- Dashboard preview (kept from Day 1 for demo continuity) ---------------
 
 
 def _demo_home_context() -> dict:
     """Static mock data for the Home preview route.
 
-    All values are fabricated; no real client data touches the public repo.
-    Day 2 replaces this with real tenant-scoped reads from data_collector.py
-    once auth + tenant middleware ship.
+    Fabricated values only; no client data. Day 3/4 replaces this with
+    real tenant-scoped reads once the Managed Agents land and pipelines
+    have enough telemetry to summarize.
     """
     spark_up = "M0,22 L15,18 L30,20 L45,14 L60,16 L75,10 L90,12 L105,7 L120,9 L135,5 L150,7 L165,3 L180,5 L200,2"
     spark_down = "M0,6 L20,8 L40,7 L60,11 L80,9 L100,14 L120,13 L140,17 L160,16 L180,20 L200,22"
@@ -61,7 +174,7 @@ def _demo_home_context() -> dict:
         "tenant_name": "Americal Patrol",
         "owner_name": "Sam Alarcon",
         "owner_initials": "SA",
-        "today_date": "2026-04-21",
+        "today_date": "2026-04-22",
         "refresh_ago": "2 min ago",
         "next_refresh": "8:00 AM local",
         "pinned_roles": [
@@ -80,80 +193,37 @@ def _demo_home_context() -> dict:
             "queued below."
         ),
         "hero_stats": [
-            {
-                "label": "Weeks saved",
-                "value": "12.4",
-                "direction": "up",
-                "delta_text": "+2.1 this week",
-                "trajectory": "ok",
-                "status_text": "on track",
-                "verified_tip": "Calculated from 187 automated actions since Feb 3",
-                "spark_path": spark_up,
-            },
-            {
-                "label": "Revenue influenced",
-                "value": "$38,260",
-                "direction": "up",
-                "delta_text": "+$4,120 vs last month",
-                "trajectory": "ok",
-                "status_text": "on track",
-                "verified_tip": "Traced to 9 deals with pipeline first-touch attribution",
-                "spark_path": spark_mixed,
-            },
-            {
-                "label": "Goal progress",
-                "value": "68%",
-                "direction": "down",
-                "delta_text": "behind pace by 7%",
-                "trajectory": "warn",
-                "status_text": "behind",
-                "verified_tip": "Measured against 3 active goals set Feb 3",
-                "spark_path": spark_down,
-            },
+            {"label": "Weeks saved", "value": "12.4", "direction": "up",
+             "delta_text": "+2.1 this week", "trajectory": "ok",
+             "status_text": "on track",
+             "verified_tip": "Calculated from 187 automated actions since Feb 3",
+             "spark_path": spark_up},
+            {"label": "Revenue influenced", "value": "$38,260", "direction": "up",
+             "delta_text": "+$4,120 vs last month", "trajectory": "ok",
+             "status_text": "on track",
+             "verified_tip": "Traced to 9 deals with pipeline first-touch attribution",
+             "spark_path": spark_mixed},
+            {"label": "Goal progress", "value": "68%", "direction": "down",
+             "delta_text": "behind pace by 7%", "trajectory": "warn",
+             "status_text": "behind",
+             "verified_tip": "Measured against 3 active goals set Feb 3",
+             "spark_path": spark_down},
         ],
         "roles": [
-            {"slug": "seo", "name": "SEO", "state": "active", "state_text": "active",
-             "actions": 23, "influenced": "1,840", "last_run": "2 min ago",
-             "grade": "A", "spark_path": spark_up},
-            {"slug": "ads", "name": "Ads", "state": "attention", "state_text": "needs attention",
-             "actions": 8, "influenced": "620", "last_run": "14 min ago",
-             "grade": "C", "spark_path": spark_down},
-            {"slug": "reviews", "name": "Reviews", "state": "active", "state_text": "active",
-             "actions": 12, "influenced": "2,800", "last_run": "3 min ago",
-             "grade": "A", "spark_path": spark_up},
-            {"slug": "morning-reports", "name": "Morning Reports", "state": "active", "state_text": "active",
-             "actions": 7, "influenced": "0", "last_run": "today at 7:00 AM",
-             "grade": "A", "spark_path": spark_flat},
-            {"slug": "blog", "name": "Blog Posts", "state": "active", "state_text": "active",
-             "actions": 3, "influenced": "340", "last_run": "4h ago",
-             "grade": "B", "spark_path": spark_up},
-            {"slug": "sales-pipeline", "name": "Sales Pipeline", "state": "active", "state_text": "active",
-             "actions": 56, "influenced": "12,400", "last_run": "18 min ago",
-             "grade": "B", "spark_path": spark_mixed},
-            {"slug": "social", "name": "Social Posts", "state": "active", "state_text": "active",
-             "actions": 4, "influenced": "0", "last_run": "yesterday",
-             "grade": "B", "spark_path": spark_flat},
-            {"slug": "gbp", "name": "Google Business", "state": "error", "state_text": "error",
-             "actions": 0, "influenced": "0", "last_run": "37 days ago",
-             "grade": "F", "spark_path": spark_flat},
-            {"slug": "website", "name": "Website", "state": "active", "state_text": "active",
-             "actions": 2, "influenced": "0", "last_run": "2 days ago",
-             "grade": "B", "spark_path": spark_flat},
-            {"slug": "chat-widget", "name": "Chat Widget", "state": "active", "state_text": "active",
-             "actions": 18, "influenced": "4,900", "last_run": "6 min ago",
-             "grade": "A", "spark_path": spark_up},
-            {"slug": "incident-alerts", "name": "Incident Alerts", "state": "active", "state_text": "active",
-             "actions": 2, "influenced": "0", "last_run": "yesterday at 2:15 AM",
-             "grade": "A", "spark_path": spark_flat},
-            {"slug": "client-reports", "name": "Client Reports", "state": "active", "state_text": "active",
-             "actions": 14, "influenced": "0", "last_run": "today at 7:00 AM",
-             "grade": "A", "spark_path": spark_flat},
-            {"slug": "watchdog", "name": "Watchdog", "state": "active", "state_text": "active",
-             "actions": 21, "influenced": "0", "last_run": "32 sec ago",
-             "grade": "A", "spark_path": spark_up},
-            {"slug": "supervisor-reports", "name": "Supervisor Reports", "state": "paused", "state_text": "paused",
-             "actions": 0, "influenced": "0", "last_run": "paused 2 days ago",
-             "grade": None, "spark_path": spark_flat},
+            {"slug": "seo", "name": "SEO", "state": "active", "state_text": "active", "actions": 23, "influenced": "1,840", "last_run": "2 min ago", "grade": "A", "spark_path": spark_up},
+            {"slug": "ads", "name": "Ads", "state": "attention", "state_text": "needs attention", "actions": 8, "influenced": "620", "last_run": "14 min ago", "grade": "C", "spark_path": spark_down},
+            {"slug": "reviews", "name": "Reviews", "state": "active", "state_text": "active", "actions": 12, "influenced": "2,800", "last_run": "3 min ago", "grade": "A", "spark_path": spark_up},
+            {"slug": "morning-reports", "name": "Morning Reports", "state": "active", "state_text": "active", "actions": 7, "influenced": "0", "last_run": "today at 7:00 AM", "grade": "A", "spark_path": spark_flat},
+            {"slug": "blog", "name": "Blog Posts", "state": "active", "state_text": "active", "actions": 3, "influenced": "340", "last_run": "4h ago", "grade": "B", "spark_path": spark_up},
+            {"slug": "sales-pipeline", "name": "Sales Pipeline", "state": "active", "state_text": "active", "actions": 56, "influenced": "12,400", "last_run": "18 min ago", "grade": "B", "spark_path": spark_mixed},
+            {"slug": "social", "name": "Social Posts", "state": "active", "state_text": "active", "actions": 4, "influenced": "0", "last_run": "yesterday", "grade": "B", "spark_path": spark_flat},
+            {"slug": "gbp", "name": "Google Business", "state": "error", "state_text": "error", "actions": 0, "influenced": "0", "last_run": "37 days ago", "grade": "F", "spark_path": spark_flat},
+            {"slug": "website", "name": "Website", "state": "active", "state_text": "active", "actions": 2, "influenced": "0", "last_run": "2 days ago", "grade": "B", "spark_path": spark_flat},
+            {"slug": "chat-widget", "name": "Chat Widget", "state": "active", "state_text": "active", "actions": 18, "influenced": "4,900", "last_run": "6 min ago", "grade": "A", "spark_path": spark_up},
+            {"slug": "incident-alerts", "name": "Incident Alerts", "state": "active", "state_text": "active", "actions": 2, "influenced": "0", "last_run": "yesterday at 2:15 AM", "grade": "A", "spark_path": spark_flat},
+            {"slug": "client-reports", "name": "Client Reports", "state": "active", "state_text": "active", "actions": 14, "influenced": "0", "last_run": "today at 7:00 AM", "grade": "A", "spark_path": spark_flat},
+            {"slug": "watchdog", "name": "Watchdog", "state": "active", "state_text": "active", "actions": 21, "influenced": "0", "last_run": "32 sec ago", "grade": "A", "spark_path": spark_up},
+            {"slug": "supervisor-reports", "name": "Supervisor Reports", "state": "paused", "state_text": "paused", "actions": 0, "influenced": "0", "last_run": "paused 2 days ago", "grade": None, "spark_path": spark_flat},
         ],
         "feed": [
             {"time": "12:42 PM", "role": "SEO", "role_slug": "seo",
@@ -182,119 +252,40 @@ def _demo_home_context() -> dict:
              "link": None, "link_text": None, "relative": "1h 30m ago"},
         ],
         "recommendations": [
-            {
-                "goal": "GROW LEADS",
-                "headline": "Your morning emails go out at 7am, but customer open times cluster 6:30 to 7:30.",
-                "reason": (
-                    "Shifting send time to 6:45 aligns with when property "
-                    "managers actually check their inbox. Industry data suggests "
-                    "a 12 to 18% open-rate lift for shops your size."
-                ),
-            },
-            {
-                "goal": "HEALTH",
-                "headline": "Google Business has been erroring for 37 days.",
-                "reason": (
-                    "Root cause is an expired OAuth token. Reconnecting takes "
-                    "about 2 minutes and restores review monitoring plus "
-                    "post scheduling."
-                ),
-            },
-            {
-                "goal": "GROW REVIEWS",
-                "headline": "Ads is pacing 18% under goal this month.",
-                "reason": (
-                    "Nine search impressions dropped this week on high-intent "
-                    "keywords. Raising the CPC cap on the Brand campaign by "
-                    "$0.40 should recover the lost traffic within 4 days."
-                ),
-            },
+            {"goal": "GROW LEADS",
+             "headline": "Your morning emails go out at 7am, but customer open times cluster 6:30 to 7:30.",
+             "reason": (
+                 "Shifting send time to 6:45 aligns with when property "
+                 "managers actually check their inbox. Industry data suggests "
+                 "a 12 to 18% open-rate lift for shops your size."
+             )},
+            {"goal": "HEALTH",
+             "headline": "Google Business has been erroring for 37 days.",
+             "reason": (
+                 "Root cause is an expired OAuth token. Reconnecting takes "
+                 "about 2 minutes and restores review monitoring plus "
+                 "post scheduling."
+             )},
+            {"goal": "GROW REVIEWS",
+             "headline": "Ads is pacing 18% under goal this month.",
+             "reason": (
+                 "Nine search impressions dropped this week on high-intent "
+                 "keywords. Raising the CPC cap on the Brand campaign by "
+                 "$0.40 should recover the lost traffic within 4 days."
+             )},
         ],
         "total_recs": 7,
     }
 
 
 @app.get("/dashboard", response_class=HTMLResponse)
-async def dashboard_preview(request: Request) -> HTMLResponse:
-    """
-    Day-1-evening preview of the Home layout with mock data.
+async def dashboard(request: Request) -> HTMLResponse:
+    """Home surface. Requires an authenticated session unless PREVIEW_MODE is on.
 
-    Gated behind PREVIEW_MODE=true so the public VPS deploy returns 401
-    unless explicitly enabled. Day 2 replaces this gate with the real
-    magic-link session cookie + tenant resolution middleware.
+    PREVIEW_MODE=true still works for hackathon demo recording so judges can
+    see the surface without a real magic link. In prod deployment it's off.
     """
-    if os.getenv("PREVIEW_MODE", "false").lower() != "true":
-        raise HTTPException(status_code=401, detail="unauthorized")
+    sess = current_session(request)
+    if sess is None and os.getenv("PREVIEW_MODE", "false").lower() != "true":
+        return RedirectResponse(url="/auth/login", status_code=303)
     return templates.TemplateResponse(request, "home.html", _demo_home_context())
-
-
-@app.get("/healthz")
-async def healthz() -> JSONResponse:
-    """Container health probe. Docker + UptimeRobot hit this."""
-    return JSONResponse({"status": "ok", "version": app.version})
-
-
-@app.get("/activate", response_class=HTMLResponse)
-async def activate_page(request: Request) -> HTMLResponse:
-    return templates.TemplateResponse(
-        request,
-        "placeholder.html",
-        {
-            "title": "Activation",
-            "heading": "Activation flow",
-            "body": (
-                "Coming Day 3: your Activation Orchestrator walks you through "
-                "getting your purchased pipelines live in about 30 minutes."
-            ),
-        },
-    )
-
-
-@app.get("/api/pipelines")
-async def api_pipelines() -> JSONResponse:
-    """Placeholder. Real tenant-scoped pipeline status ships Day 2."""
-    return JSONResponse({"pipelines": [], "status": "scaffold"})
-
-
-@app.post("/api/heartbeat")
-async def api_heartbeat(
-    request: Request,
-    x_heartbeat_secret: str | None = Header(default=None, alias="X-Heartbeat-Secret"),
-) -> JSONResponse:
-    """
-    Accepts pipeline state pushes from Americal Patrol's PC.
-
-    Day 1: shared-secret check is active. Real tenant resolution + storage
-    ships Day 2. Without the secret (or with a wrong one) this endpoint is
-    closed  -  the repo is public, so we never leave a placeholder open.
-    """
-    expected = os.getenv("HEARTBEAT_SHARED_SECRET", "")
-    if not expected or x_heartbeat_secret != expected:
-        raise HTTPException(status_code=401, detail="unauthorized")
-    return JSONResponse({"received": True, "status": "scaffold"})
-
-
-@app.get("/terms", response_class=HTMLResponse)
-async def terms(request: Request) -> HTMLResponse:
-    return templates.TemplateResponse(
-        request,
-        "placeholder.html",
-        {
-            "title": "Terms",
-            "heading": "Terms of Service",
-            "body": "Final content shipping Day 5. In plain English, owner to owner.",
-        },
-    )
-
-
-@app.get("/privacy", response_class=HTMLResponse)
-async def privacy(request: Request) -> HTMLResponse:
-    return templates.TemplateResponse(
-        request,
-        "placeholder.html",
-        {
-            "title": "Privacy",
-            "heading": "Privacy Policy",
-            "body": "Final content shipping Day 5. What we collect, why, and how to export or delete.",
-        },
-    )

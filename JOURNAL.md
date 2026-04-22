@@ -371,3 +371,74 @@ The hackathon build hit the milestone that matters most for a dashboard product:
 ### Outstanding (for Sam)
 - Decide whether to deploy the new surface to the VPS tonight (with `PREVIEW_MODE=true` on a branch that only Sam can hit, or behind the existing magic-link gate once Day 2 ships auth). Deploy standard is public-repo + Hostinger Docker API + secrets via env, per the feedback memory.
 - Consider whether the Tier 1 agency features (Sunday Digest PDF, What-if sandbox, natural-language settings, vacation mode, role scorecards, cost chip) need sub-tasks broken out into their own journal entries as they ship.
+
+---
+
+## Entry 8  -  Day 2 build, security block
+**2026-04-22 09:00 PDT to 11:40 PDT**
+
+Day 2 started with the security-first block from plan v6: magic-link auth, session cookies, tenant middleware, heartbeat receiver storage, cost tracker, and PII scrubber. The Day 1 evening session already nailed the client-facing Home surface, so today's work is all about making it safe to put real client data behind.
+
+### What got built (13 new files, 1 rewired entrypoint)
+
+**Services layer** (`dashboard_app/services/*`)  -  the reusable core:
+- `errors.py`: short-hex error IDs + structured server-side logging. Users see `ref a1b2c3d4`; full traces stay in the container log.
+- `tokens.py`: `secrets.token_urlsafe(32)` for 256-bit entropy, SHA-256 hex hashing (only the hash is stored in Airtable), constant-time compare via `hmac.compare_digest`, ISO-8601 expiry helpers with the TTL env-driven.
+- `sessions.py`: `itsdangerous.URLSafeTimedSerializer` signed cookies with a salt + max-age. Payload is minimum-viable: `{"tid": tenant_id, "em": email, "rl": role}`. The cookie kwargs helper returns HttpOnly + SameSite=Strict + Secure (the latter gated on `PRODUCTION=true` so local dev over http still works).
+- `clients_repo.py`: thin Airtable adapter over pyairtable. Reads by email or magic-link hash; writes three auth fields (`Magic Link Hash`, `Magic Link Expires`, `Magic Link Consumed`); extracts role with `ADMIN_EMAILS` allowlist taking precedence. The dashboard is a READER of the CRM; the n8n Client Onboarding workflow owns writes to the row itself.
+- `email_sender.py`: Gmail SMTP + app password. Multipart/alternative HTML + plain-text twins. One-shot sends don't need OAuth refresh so SMTP is cleaner than the AP OAuth flow.
+- `rate_limit.py`: sliding-window in-process limiter. Two buckets: login at 5/15min per email (stops email-bombing), heartbeat at 120/min per tenant (stops stolen-secret flood).
+- `scrubber.py`: regex-based PII redactor. Runs on every string written to decision logs + cost tracker. Patterns cover emails, phones, dollar amounts, and common secret prefixes (`sk-ant-api03-`, `pat...`, `ghp_`, `ghs_`). `DEBUG_LOG_PROMPTS=true` disables scrubbing for dev; prod is always on.
+- `cost_tracker.py`: JSONL-per-call cost log at `/opt/wc-solns/_platform/cost_log.jsonl`. Pricing table for Opus 4.7 / Sonnet 4.6 / Haiku 4.5. `should_allow(tenant_id)` returns False + reason when `DAILY_DEV_CAP` (default $20) or `DAILY_TENANT_CAP` (default $2) is exceeded. Unknown models fall back to Sonnet-tier to avoid silent under-counting.
+- `tenant_ctx.py`: session-resolving middleware + `require_tenant` and `require_admin` FastAPI dependencies. Protected routes declare `tenant_id = Depends(require_tenant)` and get a string or a 401.
+- `heartbeat_store.py`: tenant-scoped snapshot writer. Enforces `[a-z0-9_-]+` slug validation on both tenant_id and pipeline_id (path-traversal defence), atomic write via `.tmp` rename, overwrites on each push (most-recent-wins).
+- `telemetry.py`: per-tenant normalizer. Reads `heartbeat_store.read_all` and returns the shape the `/api/pipelines` endpoint promises.
+- `brand_resolver.py`: Platformization Seed #2. Reads `/opt/wc-solns/<tenant>/brand.json`, merges over WCAS defaults, emits CSS custom properties. Hackathon-week scope is JSON read + CSS var swap; full theme-editor UI is post-hackathon.
+
+**API layer** (`dashboard_app/api/*`):
+- `auth.py`: `/auth/login` GET (form), `/auth/request` POST (generate + email link, always redirects to neutral "check your inbox" page so we never leak which emails are in the CRM), `/auth/verify` GET (constant-time hash compare, expiry check, consumed check, issues cookie, redirects to `/dashboard` or `/admin`), `/auth/logout` POST.
+- `pipelines.py`: `GET /api/pipelines` returns the caller's tenant only. No tenant argument from the URL; the session cookie resolves it.
+- `brand.py`: `GET /api/brand` serves merged brand dict per tenant.
+- `heartbeat.py`: rewritten from Day 1's placeholder. Requires `X-Heartbeat-Secret` + `X-Tenant-Id` headers, passes through the per-tenant rate limiter, validates pipeline_id against the path-traversal guard, writes the snapshot.
+
+**Templates**:
+- `auth/login.html` + `auth/check_inbox.html`  -  owner-to-owner voice, brand colors, 44px touch targets.
+- `emails/magic_link.html` + `magic_link.txt`  -  table-HTML email compatible with Gmail/Outlook rendering. DM Serif Display headline, orange CTA button, plain-text fallback.
+- `error.html`  -  branded 500 page with copy-paste-able error ID + mailto link to Sam.
+
+**Entrypoint** (`dashboard_app/main.py`):
+- Wired the session middleware + four routers.
+- Three global exception handlers: `HTTPException` (JSON for `/api/*`, redirect-to-login on 401, branded 404 for humans), `RequestValidationError` (422 with detail), `Exception` (branded error page + stable error_id; JSON with same error_id for API clients).
+- `/dashboard` now requires an authenticated session unless `PREVIEW_MODE=true` is set (kept for demo-video recording when judges don't have a magic link).
+- `/` redirects authenticated users straight to their dashboard (or `/admin` for admins).
+
+### What got verified
+
+- **31 tests pass** (was 9 at end of Day 1). Added: auth boundary tests on 5 routes, session roundtrip + tamper-reject, cookie security defaults, token entropy + deterministic hash + constant-time compare + expiry parsing, scrubber coverage on 4 pattern families + debug-flag passthrough, cost estimate accuracy against the pricing table, cost cap blocking, heartbeat snapshot write to a pytest tmp_path, pipeline_id path-traversal rejection, middleware-lets-valid-cookie-through end-to-end.
+- **Em-dash check still passes** across all 13 new files. Pre-commit hook would block a push with any leak.
+- **No-vendor check still passes**: added `/auth/login` to the scanned route list; no "Claude" / "Opus" / "Anthropic" / "GPT-" leaks into any client-facing HTML.
+- **Privacy check by design**: `/auth/request` returns the same "check your inbox" page for unknown emails as for known ones. Rate-limiter caps work even before we hit Airtable (the attacker can't distinguish a rate-limit from an unknown email from a known email with Airtable down).
+
+### Security posture after today
+
+Every route in the app falls into one of four categories, and the categorization is enforced structurally rather than by convention:
+
+1. **Public** (landing, healthz, terms, privacy, activate, auth/*): no session required, explicit allowlist in handlers.
+2. **Session-gated** (everything under `/api/*` except heartbeat, plus `/dashboard`): `Depends(require_tenant)` raises 401 if the signed cookie is missing or invalid. The 401 gets translated by the global exception handler into a JSON error for API clients and a 303 redirect to `/auth/login` for humans.
+3. **Admin-gated** (`/admin/*`, shipping Day 4): adds `Depends(require_admin)` which further enforces `role == "admin"` via the cookie claim or `ADMIN_EMAILS` env allowlist.
+4. **Shared-secret only** (`/api/heartbeat`): constant-path gate by header + per-tenant sliding-window rate limit. No session concept here because the caller is a server-side Python script, not a browser.
+
+The only cross-tenant read path is the `require_tenant` dependency itself. It returns a tenant_id string pulled from the signed cookie and never from a URL parameter, which means there's no `/api/pipelines/<tenant_id>` shape an attacker could try to tamper with.
+
+### Files changed in this entry
+- `dashboard_app/services/` (12 new files totalling ~650 lines)
+- `dashboard_app/api/` (4 new routers totalling ~250 lines)
+- `dashboard_app/templates/auth/` + `templates/emails/` + `templates/error.html` (5 new templates)
+- `dashboard_app/main.py` (rewrote routing + added exception handlers)
+- `tests/test_smoke.py` (updated for new auth boundaries)
+- `tests/test_security.py` (new, 14 tests)
+
+### What Day 2 afternoon / Day 3 morning starts with
+
+With auth + tenant isolation locked in, Day 3 builds the Activation Orchestrator Managed Agent and its 10 tools (confirm_company_facts, activate_pipeline, request_credential, set_schedule, set_preference, set_timezone, capture_baseline, set_goals, write_kb_entry, mark_activation_complete). First-touch infrastructure that today's block made possible: every Opus call goes through `cost_tracker.record_call()` for per-tenant tracking, every prompt string and log line passes through `scrubber.scrub()`, every read-side API call resolves tenant via the signed session cookie.
+
