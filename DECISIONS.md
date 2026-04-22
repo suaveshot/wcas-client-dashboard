@@ -266,4 +266,60 @@ Short crisp entries for each major technical decision. Format: **what, why, alte
 
 ---
 
+---
+
+## ADR-016  -  Sam-only `/admin` operator view
+**Date:** 2026-04-21 evening
+**Status:** Accepted, ships Day 4 afternoon
+
+**Decision:** Add an admin-scoped route tree at `/admin/*` that renders an operator command center: all-clients grid, per-tenant invoice status, kill switches, cost-per-client, onboarding SLA clock, cross-client intel, platform health. Gated by an `ADMIN_EMAILS` env var allowlist (default: `salarcon@americalpatrol.com`). Session cookie carries `role="admin"` claim; wrong role yields 403 with branded error page.
+
+**Why:** the product's whole multi-tenant architecture (tenant-id scoping, per-tenant configs, isolated KBs) is invisible from the single-client view. The admin view exercises that architecture end-to-end AND gives Sam the one view he actually needs to profitably run an agency: whose pipelines are healthy, whose invoices are paid, whose costs exceed their revenue.
+
+**Alternative considered:** build a separate admin app. Rejected because it would require a second auth system, separate deploy, separate CI. Adding `/admin/*` to the existing FastAPI app with one allowlist check is 1/10th the work.
+
+**Layout (six rows):**
+1. Operator hero: total MRR · platform cost · gross margin % · client count by status
+2. Needs-you-today inbox: escalations, voice notes owed, overdue invoices, churn alerts, stuck activations
+3. Client grid: one card per tenant with pipeline health, goal progress, invoice badge, MRR, cost-month, kill switch
+4. Cross-client intelligence: pipeline leaderboard, Opus-generated anonymized patterns (Week 2)
+5. Platform health: Managed Agents spend, error rate, deploy SHA, uptime (Week 2)
+6. Quick actions: broadcast, export, refresh-all-recs (Week 2)
+
+**Hackathon scope cut:** rows 1-3 ship Day 4; rows 4-6 are Week 2.
+
+---
+
+## ADR-017  -  Kill switch design: alert-first, manual-trigger, reversible
+**Date:** 2026-04-21 evening
+**Status:** Accepted, ships Day 4
+
+**Decision:** The kill switch flips `tenant.status` between `"active"` and `"paused"` via `POST /admin/api/clients/<tenant_id>/status`. Paused tenants have every pipeline run guarded by a status check (no-op if not active). Paused client's `/dashboard` renders a branded "account paused, contact Sam" page. Every flip logs to `dashboard_decisions.jsonl` with timestamp + operator email + from/to status + optional reason.
+
+**Why not auto-pause at 30 days overdue?** Every payment situation has context: wire delays, disputes, new cards, bank holidays. Auto-pause at 30 days risks damaging client relationships over bookkeeping friction. Alert-first is the agency-level choice. An optional `AUTO_PAUSE_AT_DAYS=45` env var exists for when Sam trusts the automation enough to enable it later.
+
+**Why all-or-nothing per tenant vs per-pipeline granularity?** Per-pipeline creates a combinatorial explosion of partial states that's hard to reason about, hard to test, and hard to recover from. One toggle, one state transition. Simpler = safer.
+
+**Why reversible with state preservation?** If flipping the switch required a re-activation ceremony, operators would avoid using it even when appropriate. Reversible = low-friction = actually used.
+
+**Paused page UX:** plain-English owner-to-owner voice, no error state, no technical details. *"Your account is paused. Reach out to Sam at info@westcoastautomationsolutions.com to reactivate."* Dignified, not punishing.
+
+**Invoice integration:** reads `Clients.Payment Status` from Airtable (populated by existing n8n Payment Sync workflow `6C7ngCdtIPzdTSE0`). No new QBO work required. If QBO OAuth not yet configured, invoice badge shows neutral "QBO sync pending" instead of empty UI.
+
+---
+
+## ADR-018  -  Cost tracking by tenant for profitability visibility
+**Date:** 2026-04-21 evening
+**Status:** Accepted, ships Day 5 morning
+
+**Decision:** Every Anthropic API call (Messages + Managed Agents) gets tagged with the originating `tenant_id` via the cost-tracker middleware. Costs roll up to a per-client total visible on the admin client card and in the operator hero margin calculation.
+
+**Why:** the single metric agencies never track is cost-per-client. Some clients cost 3x what they pay because of heavy agent usage or edge-case resolution. Without visibility, WCAS silently subsidizes unprofitable tenants. With visibility, Sam can make pricing + tier decisions grounded in data.
+
+**Implementation:** extends the existing cost tracker from Day 2 security block. Adds a `tenant_id` column to the tracker's JSONL log. Admin view aggregates by tenant over current month.
+
+**Post-hackathon extension:** flag any tenant whose trailing-30-day cost exceeds 30% of MRR as "margin at risk." Opus proposes tier upgrade or pipeline trimming.
+
+---
+
 *More ADRs added as decisions are made during the build.*
