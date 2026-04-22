@@ -29,7 +29,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from . import telemetry
+from . import activity_feed, telemetry
 
 
 _SPARK_UP = "M0,22 L15,18 L30,20 L45,14 L60,16 L75,10 L90,12 L105,7 L120,9 L135,5 L150,7 L165,3 L180,5 L200,2"
@@ -171,7 +171,7 @@ def build(tenant_id: str, owner_name: str = "", tenant_display: str = "") -> dic
         "narrative": narrative,
         "hero_stats": _hero_stats_placeholder(len(roles)),
         "roles": roles or _fallback_roles_when_empty(),
-        "feed": [],  # Day 3: real activity feed
+        "feed": activity_feed.build(tenant_id),
         "recommendations": [],  # Day 4: real recommendations
         "total_recs": 0,
     }

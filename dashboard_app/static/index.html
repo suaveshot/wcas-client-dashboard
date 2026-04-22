@@ -4,39 +4,186 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>WCAS Client Dashboard</title>
-    <meta name="description" content="Agency-level client activation and live automation telemetry for WCAS clients.">
+    <meta name="description" content="The agency-level dashboard for WestCoast Automation Solutions clients. Live automation telemetry, goal-anchored recommendations, and a 10-second undo on every action.">
     <meta name="theme-color" content="#FBFAF7">
-    <meta name="robots" content="noindex">
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="stylesheet" href="/static/styles.css?v=20260422c">
+
+    <style>
+        .home {
+            max-width: 880px;
+            margin: 0 auto;
+            padding: clamp(48px, 9vw, 112px) clamp(20px, 4vw, 56px);
+        }
+        .home__eyebrow {
+            display: inline-block;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.14em;
+            color: var(--ink-muted);
+            margin-bottom: 20px;
+        }
+        .home__eyebrow::before {
+            content: '✦';
+            color: var(--accent);
+            margin-right: 8px;
+        }
+        .home h1 {
+            font-family: var(--font-display);
+            font-size: clamp(34px, 6vw, 56px);
+            line-height: 1.06;
+            letter-spacing: -0.01em;
+            color: var(--ink);
+            margin-bottom: 20px;
+        }
+        .home h1 em {
+            font-style: italic;
+            color: var(--accent);
+        }
+        .home__lead {
+            font-size: clamp(16px, 1.6vw, 19px);
+            line-height: 1.55;
+            color: var(--ink-soft);
+            max-width: 620px;
+            margin-bottom: 40px;
+        }
+        .home__cta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            align-items: center;
+            margin-bottom: 56px;
+        }
+        .home__cta .btn {
+            min-height: 48px;
+            padding: 12px 22px;
+            border-radius: var(--r-sm);
+            font-family: var(--font-body);
+            font-weight: 600;
+            font-size: 16px;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            border: 1px solid var(--accent);
+            background: var(--accent);
+            color: #fff;
+            cursor: pointer;
+            transition: background var(--t-fast) var(--ease), transform var(--t-fast) var(--ease);
+        }
+        .home__cta .btn:hover { background: var(--accent-deep); border-color: var(--accent-deep); }
+        .home__cta .btn--secondary {
+            background: var(--bg-elev);
+            color: var(--ink);
+            border-color: var(--border-strong);
+        }
+        .home__cta .btn--secondary:hover {
+            background: var(--bg-alt);
+            border-color: var(--ink);
+            color: var(--ink);
+        }
+        .home__judge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .home__judge-spark { color: var(--accent); font-size: 14px; }
+        .home__pill-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px 20px;
+            padding: 20px 24px;
+            background: var(--bg-elev);
+            border: 1px solid var(--border);
+            border-radius: var(--r-md);
+            margin-bottom: 40px;
+        }
+        .home__pill {
+            display: inline-flex;
+            align-items: baseline;
+            gap: 10px;
+            font-size: 14px;
+            color: var(--ink-soft);
+        }
+        .home__pill-num {
+            font-family: var(--font-display);
+            font-style: italic;
+            font-size: 22px;
+            color: var(--ink);
+            line-height: 1;
+        }
+        .home__footer {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px 18px;
+            padding-top: 28px;
+            border-top: 1px solid var(--border-soft);
+            font-size: 13px;
+            color: var(--ink-muted);
+        }
+        .home__footer a { color: var(--ink-muted); text-decoration: none; }
+        .home__footer a:hover { color: var(--ink); text-decoration: underline; }
+        .home__footer-credit {
+            margin-left: auto;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            color: var(--ink-faint);
+        }
+        .home__footer-credit::before {
+            content: '';
+            display: inline-block;
+            width: 6px; height: 6px;
+            border-radius: 50%;
+            background: var(--ok);
+        }
+        @media (max-width: 640px) {
+            .home__pill-row { flex-direction: column; }
+            .home__footer-credit { margin-left: 0; margin-top: 4px; }
+        }
+    </style>
 </head>
 <body>
-    <main class="landing">
-        <span class="landing__eyebrow">WestCoast Automation Solutions</span>
-        <h1>Your automation agency, in one place.</h1>
-        <p class="landing__lead">
-            Dashboard for WCAS clients. Check the pipelines we run for you, see what they did this month, and ask about what to change next.
-        </p>
+<main class="home">
+    <span class="home__eyebrow">WestCoast Automation Solutions</span>
+    <h1>Your automation agency, <em>in one place.</em></h1>
+    <p class="home__lead">
+        Fourteen automation roles run quietly in the background for your business. This dashboard shows what they did this week, how each one is pacing against your goals, and what to change next. Owner to owner, no jargon, undo on every action.
+    </p>
 
-        <div class="landing__cta">
-            <a class="btn" href="mailto:info@westcoastautomationsolutions.com?subject=Dashboard%20access">Request access</a>
-            <a class="btn btn--secondary" href="https://westcoastautomationsolutions.com">Learn more</a>
-        </div>
+    <div class="home__cta">
+        <a class="btn btn--secondary" href="/auth/login">Sign in with your email</a>
 
-        <div class="landing__meta">
-            <p>
-                Access is by invitation. If you are an active WCAS client, check your inbox for the magic link from
-                <a href="mailto:info@westcoastautomationsolutions.com">info@westcoastautomationsolutions.com</a>.
-            </p>
-            <p style="margin-top:12px;">
-                Source on <a href="https://github.com/suaveshot/wcas-client-dashboard">GitHub</a>.
-                <a href="/terms">Terms</a> · <a href="/privacy">Privacy</a>
-            </p>
-        </div>
-    </main>
+        <form method="post" action="/auth/request" style="margin: 0;">
+            <input type="hidden" name="email" value="demo@claudejudge.com">
+            <button type="submit" class="btn home__judge" aria-label="Try as a hackathon judge">
+                <span class="home__judge-spark" aria-hidden="true">✦</span>
+                Try as a judge
+            </button>
+        </form>
+    </div>
+
+    <div class="home__pill-row" aria-label="What's inside">
+        <span class="home__pill"><span class="home__pill-num">14</span> automation roles</span>
+        <span class="home__pill"><span class="home__pill-num">10s</span> undo on every action</span>
+        <span class="home__pill"><span class="home__pill-num">3</span> goal-anchored recs / week</span>
+        <span class="home__pill"><span class="home__pill-num">0</span> agency retainers</span>
+    </div>
+
+    <p style="font-size: 14px; color: var(--ink-muted); margin-bottom: 40px; line-height: 1.6;">
+        Access is by invitation. If you're an active WCAS client, check your inbox for the magic-link email from <a href="mailto:info@westcoastautomationsolutions.com" style="color: var(--ink); font-weight: 500;">info@westcoastautomationsolutions.com</a>. New shops can <a href="https://westcoastautomationsolutions.com" style="color: var(--ink); font-weight: 500;">learn more at westcoastautomationsolutions.com</a>.
+    </p>
+
+    <div class="home__footer">
+        <a href="https://github.com/suaveshot/wcas-client-dashboard">Source on GitHub</a>
+        <a href="/terms">Terms</a>
+        <a href="/privacy">Privacy</a>
+        <span class="home__footer-credit">Hackathon build · April 2026</span>
+    </div>
+</main>
 </body>
 </html>

@@ -513,3 +513,69 @@ The longer version is ADR-024 in `DECISIONS.md`. It locks the schema so Day 3 + 
 
 The Activation Orchestrator Managed Agent and the first full-sized Opus call: a grounded recommendations pass against Sam's real Americal Patrol telemetry. Because the guardrail + schema + cost tracker landed today, tomorrow's work is "write the prompt and let it run" rather than "also design the safety net."
 
+---
+
+## Entry 10  -  Day 2 polish pass: shell primitives + activity feed + landing page
+**2026-04-22 evening, PDT**
+
+Morning and afternoon landed the heavy Day 2 work (auth, Opus wrapper, home context, role detail with the first Ask box, log timeline). Evening was a deliberate step back to fix what was still half-wired on the Home shell before entering Day 3's activation-orchestrator build. Auditing home.html found ~eight dead buttons (topbar Ask, Cmd-K pill, quick-action chips, attention banner Apply/Dismiss/Snooze, feed density toggle), a toast stack container with no JS driver, privacy-mode CSS with no toggle, and an empty feed array in `home_context.build()` despite that work being listed in the Day 2 plan. Those are the primitives Day 3 activation + Day 4 admin will reuse, so fixing them tonight is leverage, not polish.
+
+### What got built (4 new files, 5 modified)
+
+**Shared primitives (frontend):**
+- `static/undo.js` (new, 170 lines): `window.apToast.push({kind, text, onCommit, onUndo, delayMs})` API. Kinds: undo / ok / err / info. Undo variant renders 10 progress dots that fill over the 10-second window, a live "s" countdown, and an Undo button. Auto-commits on timeout unless undo clicked. Max 4 toasts visible; 5th evicts the oldest. DOM-only rendering via textContent so no XSS path. Creates stack container if missing so it works on any page.
+- `static/shell.js` (new, 390 lines): shell-level primitives. Privacy mode (topbar eye button + Ctrl/Cmd+Shift+P, localStorage-persisted), Focus mode (Ctrl/Cmd+Shift+F, uses the existing `body.ap-focus` CSS that hides rail + canvas), Cmd-K palette (fuzzy-searches roles collected from DOM, prefix `?` or `/` enables ask-mode that forwards to the inline Ask form on role_detail), attention banner handlers (Apply/Dismiss/Snooze POST to /api/attention/act with 10s undo toast), quick-action chips (Set a goal -> /goals, Pause -> opens palette, Request -> mailto, Ask -> palette with ? prefix), feed density toggle. Only DOM APIs; no innerHTML with dynamic data.
+
+**Activity feed backend:**
+- `services/activity_feed.py` (new, 180 lines): derives feed rows from heartbeat snapshots (one per pipeline_id, derived from `status` + `summary` into a client-friendly sentence) merged with per-tenant `decisions.jsonl` entries (written by attention API + future Apply flows). Newest-first, capped at 12 rows. Brand-voiced empty state instead of a blank container. Exposes `append_decision(tenant_id, actor, kind, text)` so API layers log decisions in one place.
+- `api/attention.py` (new): POST `/api/attention/act` accepts `{action: apply|dismiss|snooze}`, requires session, appends a decisions.jsonl row. No state mutation yet because the banner is content-driven, not DB-driven; this is the audit trail.
+- `services/home_context.py` rewired: `feed: []` replaced with `feed: activity_feed.build(tenant_id)`.
+- `main.py` mounts attention router + adds a `/goals` placeholder route.
+
+**Landing page:**
+- `static/index.html` rewrite (~160 lines). Owner-to-owner voice, headline "Your automation agency, in one place.", three-line value prop, two CTAs (Sign in + "Try as a judge"), a pill row summarizing what's inside (14 roles, 10s undo, 3 recs/week, 0 retainers), footer with GitHub + Terms + Privacy + hackathon credit. The "Try as a judge" button is a real form that POSTs to `/auth/request` with `email=demo@claudejudge.com` so a judge's click feeds straight into the magic-link flow once Sam seeds that Airtable row.
+
+**CSS additions (append to styles.css):**
+- Topbar privacy toggle button styling (pill shape, pressed state)
+- Feed density rules (compressed padding + hide link line when dense)
+- Cmd-K palette: backdrop, rise animation, input row, list items, item-kind pill, empty state, footer hint, mobile breakpoint
+- Mobile ≤767px: hide search pill, bump attention banner buttons to 44px touch targets, bump topbar icon buttons to 44px, stack landing CTA vertically
+
+### What got verified
+
+- **66 tests pass** (was 44 at end of Day 2 PM; 57 after the two commits between Entry 9 and now, then +9 in this entry: 5 activity_feed + 4 attention_api).
+- Two test failures surfaced and were fixed before commit: (1) "Opus 4.7" in the landing footer leaked the vendor-name guard -> changed to "Hackathon build · April 2026"; (2) `activity_feed.build` on an invalid tenant slug crashed in `_decision_rows` because `heartbeat_store.tenant_root` raises -> wrapped in a second try/except. Both caught by tests, both failing-before / passing-after.
+- App imports and registers 26 routes cleanly.
+- Em-dash check clean across all 4 new files (one slipped into undo.js inside a comment, rewritten to use a semicolon before first save).
+- Vendor-name leak check clean (Claude / Opus / Anthropic / GPT- not present in any rendered HTML).
+
+### Design decisions worth calling out
+
+**The palette's ask mode is deliberately scoped.** Typing `?` in the Cmd-K palette only forwards to /api/ask when the user is already on a role-detail page (so the role is unambiguous). On Home it shows "Open a role card, then type ? to ask about it." The alternative, letting the user pick a role from the palette then ask, would require a multi-step flow that doesn't pay for its complexity at the hackathon scale. The one-role-at-a-time model stays honest to the plan's "read-only, grounded" rule for Ask.
+
+**Attention banner is still content-driven.** Apply doesn't mutate anything server-side yet; it logs the click to decisions.jsonl. When Day 4's recommendations engine comes online, Apply will wire to a real tool call + undo-safe rollback. Tonight's work is the audit trail and the undo-ritual UX; it's what the real Apply will slot into without rework.
+
+**Mobile hides the search pill rather than miniaturizing it.** The pill is 480px wide and not a native mobile motion anyway. The privacy toggle + bell + Ask button all sit in the topbar and meet the 44px tap target; the palette is still reachable via Ask, and Cmd-K is a desktop-only keybind by nature.
+
+### Files changed in this entry
+
+**New:**
+- `dashboard_app/static/undo.js`
+- `dashboard_app/static/shell.js`
+- `dashboard_app/services/activity_feed.py`
+- `dashboard_app/api/attention.py`
+- `tests/test_activity_feed.py` (5 tests)
+- `tests/test_attention_api.py` (4 tests)
+
+**Modified:**
+- `dashboard_app/static/styles.css` (+200 lines: palette, density, privacy toggle, mobile tap targets)
+- `dashboard_app/static/index.html` (landing page rewrite)
+- `dashboard_app/templates/home.html` (script tags, cache-bust)
+- `dashboard_app/templates/role_detail.html` (script tags, toast stack, cache-bust)
+- `dashboard_app/services/home_context.py` (feed wired to activity_feed)
+- `dashboard_app/main.py` (attention router mounted, /goals placeholder)
+
+### What Day 3 morning starts with
+
+Activation Orchestrator Managed Agent scope, unchanged. The shell primitives, toast/undo, palette, and attention banner wiring mean Day 3's activation chat UI and Day 4's admin surface both inherit the client-facing UX without reinventing it. Every interactive element on /dashboard now either does something real or routes through the undo-gated decision log; no dead buttons left.
+

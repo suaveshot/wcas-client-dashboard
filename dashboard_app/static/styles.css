@@ -1935,6 +1935,21 @@ body.ap-focus .ap-shell__main { width: 100%; }
 
   .ap-activate__body { grid-template-columns: 1fr; }
   .ap-ring-grid { padding: var(--s-5); grid-template-columns: repeat(2, 1fr); }
+
+  /* The search pill becomes redundant on mobile; tapping Ask or the privacy
+     toggle still works, and Cmd-K isn't a mobile motion anyway. Hiding it
+     frees the topbar row for breadcrumb + three 44px tap targets. */
+  .ap-search-pill { display: none; }
+
+  /* Bump attention banner buttons to the 44px mobile tap target. */
+  .ap-attention__btn { height: 44px; min-width: 44px; font-size: 14px; }
+
+  /* Make topbar icon controls meet the 44px tap target too. */
+  .ap-shell__bell, .ap-privacy-toggle { width: 44px; height: 44px; }
+
+  /* Landing CTA stack on very narrow screens. */
+  .home__cta { flex-direction: column; align-items: stretch; }
+  .home__cta .btn { justify-content: center; }
 }
 
 /* -----------------------------------------------------------------------------
@@ -2282,4 +2297,215 @@ body.ap-focus .ap-shell__main { width: 100%; }
   color: var(--ink-faint);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
+
+/* -----------------------------------------------------------------------------
+   TOPBAR PRIVACY TOGGLE (injected by shell.js)
+   ----------------------------------------------------------------------------- */
+
+.ap-privacy-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+}
+.ap-privacy-toggle:hover {
+  background: var(--bg-alt);
+  color: var(--ink);
+}
+.ap-privacy-toggle[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--bg-warm);
+  border-color: var(--ink);
+}
+
+/* -----------------------------------------------------------------------------
+   FEED DENSITY (dense mode compresses the transparency feed rows)
+   ----------------------------------------------------------------------------- */
+
+body.ap-feed-dense .ap-feed__row {
+  padding-top: var(--s-2);
+  padding-bottom: var(--s-2);
+}
+body.ap-feed-dense .ap-feed__text { font-size: 13px; }
+body.ap-feed-dense .ap-feed__link { display: none; }
+body.ap-feed-dense .ap-feed__icon { width: 14px; height: 14px; }
+
+/* -----------------------------------------------------------------------------
+   CMD-K PALETTE
+   ----------------------------------------------------------------------------- */
+
+.ap-palette[hidden] { display: none; }
+
+.ap-palette {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+}
+
+.ap-palette__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 42, 68, 0.35);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  animation: ap-palette-fade var(--t-base) var(--ease);
+}
+
+@keyframes ap-palette-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.ap-palette__panel {
+  position: relative;
+  width: min(560px, calc(100vw - 32px));
+  max-height: 70vh;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: ap-palette-rise var(--t-base) var(--ease);
+}
+
+@keyframes ap-palette-rise {
+  from { transform: translateY(12px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.ap-palette__input-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-4) var(--s-5);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.ap-palette__spark {
+  color: var(--accent);
+  font-size: 18px;
+  line-height: 1;
+}
+
+.ap-palette__input {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-body);
+  font-size: 16px;
+  color: var(--ink);
+  background: transparent;
+  border: 0;
+  outline: none;
+  padding: 4px 0;
+}
+.ap-palette__input::placeholder { color: var(--ink-faint); }
+
+.ap-palette__hint {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: var(--ink-muted);
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-xs);
+}
+
+.ap-palette__list {
+  list-style: none;
+  margin: 0;
+  padding: var(--s-2) 0;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.ap-palette__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-5);
+  cursor: pointer;
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1.35;
+}
+
+.ap-palette__item--active {
+  background: var(--bg-alt);
+}
+
+.ap-palette__item-label {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ap-palette__item-spark {
+  color: var(--accent);
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.ap-palette__item--ask {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.ap-palette__item-kind {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-faint);
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  flex-shrink: 0;
+}
+
+.ap-palette__empty {
+  list-style: none;
+  padding: var(--s-5);
+  color: var(--ink-muted);
+  font-size: 14px;
+  text-align: center;
+}
+
+.ap-palette__footer {
+  padding: var(--s-2) var(--s-5);
+  border-top: 1px solid var(--border-soft);
+  font-size: 11px;
+  color: var(--ink-faint);
+  background: var(--bg);
+}
+
+body.ap-palette-open { overflow: hidden; }
+
+/* Mobile: palette drops to near-full-screen */
+@media (max-width: 640px) {
+  .ap-palette { padding-top: 4vh; }
+  .ap-palette__panel {
+    width: calc(100vw - 16px);
+    max-height: 86vh;
+  }
+  .ap-palette__input-row { padding: var(--s-3) var(--s-4); }
+  .ap-palette__item { padding: var(--s-3) var(--s-4); }
+}
+
 

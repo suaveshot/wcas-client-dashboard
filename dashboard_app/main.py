@@ -18,6 +18,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .api import ask as ask_api
+from .api import attention as attention_api
 from .api import auth as auth_api
 from .api import brand as brand_api
 from .api import heartbeat as heartbeat_api
@@ -50,6 +51,7 @@ app.include_router(pipelines_api.router)
 app.include_router(brand_api.router)
 app.include_router(heartbeat_api.router)
 app.include_router(ask_api.router)
+app.include_router(attention_api.router)
 
 
 # --- Exception handlers ------------------------------------------------------
@@ -222,6 +224,15 @@ async def settings_page(request: Request):
         request,
         "Settings",
         "Timezone, tone, do-not-disturb windows, goal editing, brand overrides, and notification preferences are all on the Day 3 agenda.",
+    )
+
+
+@app.get("/goals", response_class=HTMLResponse)
+async def goals_page(request: Request):
+    return _sidebar_stub(
+        request,
+        "Goals",
+        "Set one to three clear goals and every recommendation will anchor to them. Full goal-setting surface opens Day 3 alongside activation; for now, reply to your welcome email with the outcomes you care about this quarter and Sam will pin them.",
     )
 
 
