@@ -19,14 +19,20 @@ false negatives leak. This is not a substitute for structured logging.
 import os
 import re
 
+# Patterns apply in order. Secret-shaped tokens come FIRST because their
+# long character runs can otherwise fragment-match the phone/email rules
+# below (e.g. "0123456789" inside a Google refresh token looks like a
+# phone number to a dumb regex).
 _PATTERNS = (
-    (re.compile(r"\b[\w.%+-]+@[\w.-]+\.[A-Za-z]{2,}\b"), "[email]"),
-    (re.compile(r"(?<!\d)(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}(?!\d)"), "[phone]"),
-    (re.compile(r"\$\s?\d{1,3}(?:,\d{3})*(?:\.\d+)?[kKmM]?"), "[money]"),
     (re.compile(r"\bsk-ant-[a-zA-Z0-9_-]{20,}\b"), "[secret]"),
     (re.compile(r"\bpat[a-zA-Z0-9]{14,}\b"), "[secret]"),
     (re.compile(r"\bghp_[a-zA-Z0-9]{20,}\b"), "[secret]"),
     (re.compile(r"\bghs_[a-zA-Z0-9]{20,}\b"), "[secret]"),
+    (re.compile(r"\b1//[A-Za-z0-9_-]{60,}\b"), "[secret]"),
+    (re.compile(r"\bya29\.[A-Za-z0-9_-]{20,}\b"), "[secret]"),
+    (re.compile(r"\b[\w.%+-]+@[\w.-]+\.[A-Za-z]{2,}\b"), "[email]"),
+    (re.compile(r"(?<!\d)(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}(?!\d)"), "[phone]"),
+    (re.compile(r"\$\s?\d{1,3}(?:,\d{3})*(?:\.\d+)?[kKmM]?"), "[money]"),
 )
 
 

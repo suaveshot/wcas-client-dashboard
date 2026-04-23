@@ -10,7 +10,7 @@ import logging
 import os
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -24,14 +24,15 @@ from .api import auth as auth_api
 from .api import brand as brand_api
 from .api import goals as goals_api
 from .api import heartbeat as heartbeat_api
+from .api import oauth as oauth_api
 from .api import outgoing as outgoing_api
 from .api import pipelines as pipelines_api
 from .api import receipts as receipts_api
 from .api import recs as recs_api
 from .api import settings as settings_api
 from .api import tenant as tenant_api
-from .services import activity_feed, errors, goals as goals_svc, home_context, outgoing_queue, recs_store, role_detail, security_headers, seeded_recs, telemetry, tenant_ctx, tenant_prefs
-from .services.tenant_ctx import current_session
+from .services import activation_state, activity_feed, credentials, errors, goals as goals_svc, home_context, outgoing_queue, recs_store, role_detail, security_headers, seeded_recs, telemetry, tenant_ctx, tenant_prefs, validation_probe
+from .services.tenant_ctx import current_session, require_tenant
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 
@@ -61,6 +62,7 @@ app.include_router(auth_api.router)
 app.include_router(pipelines_api.router)
 app.include_router(brand_api.router)
 app.include_router(heartbeat_api.router)
+app.include_router(oauth_api.router)
 app.include_router(ask_api.router)
 app.include_router(ask_global_api.router)
 app.include_router(attention_api.router)
@@ -136,20 +138,94 @@ async def healthz() -> JSONResponse:
     return JSONResponse({"status": "ok", "version": app.version})
 
 
+@app.get("/auth/dev-login")
+async def dev_login(tenant: str = "americal_patrol") -> RedirectResponse:
+    """Dev-only session shortcut. 404s in production.
+
+    Lets a dev get a logged-in session without running Airtable + magic
+    link email locally. Never reachable when PRODUCTION=true.
+    """
+    import re as _re
+    from .services import sessions as _sessions
+
+    if os.getenv("PRODUCTION", "false").lower() == "true":
+        raise HTTPException(status_code=404, detail="not found")
+    if not _re.match(r"^[a-z0-9][a-z0-9_-]{0,63}$", tenant):
+        raise HTTPException(status_code=400, detail="invalid tenant slug")
+    cookie_value = _sessions.issue(
+        tenant_id=tenant, email=f"{tenant}@dev.local", role="client"
+    )
+    response = RedirectResponse(url="/activate", status_code=303)
+    response.set_cookie(value=cookie_value, **_sessions.cookie_kwargs())
+    return response
+
+
+# Ring grid roster for the activation wizard. 14 AP pipeline roles +
+# one summary slot = 15-cell 3x5 grid. For post-hackathon, this gets
+# derived per-tenant from a clients.json equivalent; hardcoded for the
+# demo tenant (AP).
+ACTIVATION_ROSTER: list[dict[str, str]] = [
+    {"slug": "gbp",              "name": "Google Business"},
+    {"slug": "seo",              "name": "SEO"},
+    {"slug": "reviews",          "name": "Reviews"},
+    {"slug": "sales_pipeline",   "name": "Sales Pipeline"},
+    {"slug": "blog",             "name": "Blog Posts"},
+    {"slug": "social",           "name": "Social Posts"},
+    {"slug": "ads",              "name": "Ads"},
+    {"slug": "chat_widget",      "name": "Chat Widget"},
+    {"slug": "qbr",              "name": "QBR Generator"},
+    {"slug": "patrol",           "name": "Morning Reports"},
+    {"slug": "harbor_lights",    "name": "HOA Parking"},
+    {"slug": "guard_compliance", "name": "Guard Compliance"},
+    {"slug": "weekly_update",    "name": "Weekly Update"},
+    {"slug": "watchdog",         "name": "Watchdog"},
+]
+
+
 @app.get("/activate", response_class=HTMLResponse)
-async def activate_page(request: Request) -> HTMLResponse:
+async def activate_page(request: Request, tenant_id: str = Depends(require_tenant)) -> HTMLResponse:
+    """Activation wizard: 45/55 chat-left + ring-grid-right layout."""
+    role_slugs = [r["slug"] for r in ACTIVATION_ROSTER]
+    rings_by_slug = {r["slug"]: r for r in activation_state.ring_view(tenant_id, role_slugs)}
+    roster_with_state = [
+        {**role, **rings_by_slug.get(role["slug"], {"step": None, "percent_complete": 0.0})}
+        for role in ACTIVATION_ROSTER
+    ]
+    google_cred = credentials.load(tenant_id, "google")
+    probe_summary = validation_probe.load_result(tenant_id, "google")
+    connected_hint = request.query_params.get("connected", "")
+    connect_error = request.query_params.get("connect_error", "")
     return templates.TemplateResponse(
         request,
-        "placeholder.html",
+        "activate.html",
         {
-            "title": "Activation",
-            "heading": "Activation flow",
-            "body": (
-                "Coming Day 3: your Activation Orchestrator walks you through "
-                "getting your purchased pipelines live in about 30 minutes."
-            ),
+            "tenant_name": tenant_id.replace("_", " ").title(),
+            "roster": roster_with_state,
+            "google_connected": google_cred is not None,
+            "google_validation_status": (google_cred or {}).get("validation_status", ""),
+            "probe_summary": probe_summary,
+            "connected_hint": connected_hint,
+            "connect_error": connect_error,
         },
     )
+
+
+@app.get("/api/activation/state")
+async def activation_state_api(tenant_id: str = Depends(require_tenant)) -> JSONResponse:
+    """JSON state for the activate page's poll-after-OAuth flow."""
+    role_slugs = [r["slug"] for r in ACTIVATION_ROSTER]
+    rings_by_slug = {r["slug"]: r for r in activation_state.ring_view(tenant_id, role_slugs)}
+    rings = [
+        {**role, **rings_by_slug.get(role["slug"], {"step": None, "percent_complete": 0.0})}
+        for role in ACTIVATION_ROSTER
+    ]
+    google_cred = credentials.load(tenant_id, "google")
+    return JSONResponse({
+        "rings": rings,
+        "google_connected": google_cred is not None,
+        "google_validation_status": (google_cred or {}).get("validation_status", ""),
+        "probe_summary": validation_probe.load_result(tenant_id, "google"),
+    })
 
 
 @app.get("/terms", response_class=HTMLResponse)

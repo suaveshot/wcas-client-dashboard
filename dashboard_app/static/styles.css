@@ -3458,3 +3458,297 @@ body.ap-receipts-drawer-open { overflow: hidden; }
 }
 
 
+
+
+/* =============================================================================
+   Activation wizard (/activate)
+   45/55 chat-left, ring-grid-right. Full-screen, no sidebar.
+   ========================================================================== */
+
+.ap-activate-body {
+  background: var(--bg);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.ap-activate-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--s-5);
+  height: 56px;
+  padding: 0 var(--s-5);
+  background: var(--bg-elev);
+  border-bottom: 1px solid var(--border-soft);
+  flex-shrink: 0;
+}
+.ap-activate-bar__back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  color: var(--ink-muted);
+  font-size: 14px;
+  font-weight: 500;
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-sm);
+  transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+}
+.ap-activate-bar__back:hover { background: var(--bg-alt); color: var(--ink); }
+.ap-activate-bar__progress {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  color: var(--ink-muted);
+  font-size: 13px;
+  font-weight: 500;
+  flex-grow: 1;
+  justify-content: center;
+}
+.ap-activate-bar__progress-dot { color: var(--ink-faint); }
+.ap-activate-bar__save {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  color: var(--ok);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.ap-activate-progress {
+  height: 4px;
+  background: var(--border-soft);
+  flex-shrink: 0;
+  overflow: hidden;
+}
+.ap-activate-progress__fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width var(--t-slow) var(--ease);
+}
+
+.ap-activate-main {
+  display: grid;
+  grid-template-columns: 45% 55%;
+  flex-grow: 1;
+  min-height: 0;
+}
+
+/* ----- Chat column -------------------------------------------------------- */
+
+.ap-activate-chat {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border-right: 1px solid var(--border-soft);
+  overflow: hidden;
+}
+.ap-activate-chat__stream {
+  flex-grow: 1;
+  padding: var(--s-6) var(--s-5);
+  overflow-y: auto;
+  max-width: 620px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.ap-activate-msg {
+  display: flex;
+  gap: var(--s-3);
+  margin-bottom: var(--s-6);
+}
+.ap-activate-msg--asst .ap-activate-msg__glyph {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  line-height: 1;
+  margin-top: 2px;
+}
+.ap-activate-msg__body { flex: 1; color: var(--ink-soft); line-height: 1.6; }
+.ap-activate-msg__first {
+  font-family: var(--font-display);
+  font-size: 20px;
+  line-height: 1.4;
+  color: var(--ink);
+  margin-bottom: var(--s-3);
+}
+.ap-activate-msg__body p + p { margin-top: var(--s-3); }
+
+.ap-activate-proof {
+  list-style: none;
+  margin-top: var(--s-3);
+  padding: 0;
+}
+.ap-activate-proof li {
+  position: relative;
+  padding: var(--s-2) 0 var(--s-2) var(--s-5);
+  font-size: 15px;
+  color: var(--ink-soft);
+  border-bottom: 1px solid var(--border-soft);
+}
+.ap-activate-proof li:last-child { border-bottom: 0; }
+.ap-activate-proof li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  margin-top: -7px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: inset 0 0 0 3px var(--bg);
+}
+
+/* Prompt / action bar pinned to the bottom of the chat column. */
+.ap-activate-action {
+  padding: var(--s-4) var(--s-5) var(--s-5);
+  background: var(--bg);
+  border-top: 1px solid var(--border-soft);
+  max-width: 620px;
+  width: 100%;
+  margin: 0 auto;
+  flex-shrink: 0;
+}
+.ap-activate-connect {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-5);
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  border-radius: var(--r-pill);
+  font-weight: 600;
+  font-size: 15px;
+  letter-spacing: 0.01em;
+  box-shadow: var(--shadow-glow);
+  transition: transform var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease);
+}
+.ap-activate-connect:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 28px rgba(233, 123, 46, 0.28);
+}
+.ap-activate-connect:focus-visible {
+  outline: 2px solid var(--accent-deep);
+  outline-offset: 2px;
+}
+.ap-activate-connect--done {
+  background: var(--ok);
+  box-shadow: none;
+  cursor: default;
+}
+.ap-activate-connect--done:hover { transform: none; box-shadow: none; }
+.ap-activate-connect__ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.ap-activate-action__hint {
+  margin-top: var(--s-3);
+  font-size: 13px;
+  color: var(--ink-muted);
+  margin-bottom: 0;
+}
+
+/* ----- Ring grid --------------------------------------------------------- */
+
+.ap-activate-rings {
+  background: var(--bg-alt);
+  padding: var(--s-6) var(--s-6);
+  overflow-y: auto;
+}
+.ap-activate-rings__title {
+  font-size: 24px;
+  margin-bottom: var(--s-2);
+}
+.ap-activate-rings__sub {
+  color: var(--ink-muted);
+  font-size: 13px;
+  margin-bottom: var(--s-5);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.ap-activate-rings__grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--s-5) var(--s-4);
+}
+
+.ap-activate-ring {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: var(--s-2);
+}
+.ap-activate-ring__svg {
+  display: block;
+}
+
+/* Ring arcs: default every arc to the muted pending color; the data-role-step
+   attribute on the parent paints arcs teal as the role advances. Colors
+   transition so the "click once, six rings fill" moment feels alive. */
+.ap-activate-ring__arc {
+  stroke: var(--border-strong);
+  transition: stroke var(--t-slow) var(--ease);
+}
+.ap-activate-ring[data-role-step="credentials"] .ap-activate-ring__arc--1 { stroke: var(--teal); }
+.ap-activate-ring[data-role-step="config"]      .ap-activate-ring__arc--1,
+.ap-activate-ring[data-role-step="config"]      .ap-activate-ring__arc--2 { stroke: var(--teal); }
+.ap-activate-ring[data-role-step="connected"]   .ap-activate-ring__arc--1,
+.ap-activate-ring[data-role-step="connected"]   .ap-activate-ring__arc--2,
+.ap-activate-ring[data-role-step="connected"]   .ap-activate-ring__arc--3 { stroke: var(--teal); }
+.ap-activate-ring[data-role-step="first_run"]   .ap-activate-ring__arc { stroke: var(--teal); }
+.ap-activate-ring[data-role-step="first_run"]   .ap-activate-ring__svg {
+  filter: drop-shadow(0 0 8px rgba(46, 143, 168, 0.35));
+}
+
+.ap-activate-ring__label {
+  font-family: var(--font-display);
+  font-size: 15px;
+  color: var(--ink);
+  line-height: 1.2;
+  margin-top: var(--s-1);
+}
+.ap-activate-ring__step {
+  font-size: 12px;
+  color: var(--ink-muted);
+  letter-spacing: 0.02em;
+}
+.ap-activate-ring[data-role-step="connected"] .ap-activate-ring__step,
+.ap-activate-ring[data-role-step="first_run"] .ap-activate-ring__step {
+  color: var(--teal);
+  font-weight: 500;
+}
+
+/* ----- Mobile ------------------------------------------------------------ */
+
+@media (max-width: 860px) {
+  .ap-activate-main { grid-template-columns: 1fr; }
+  .ap-activate-chat { border-right: 0; border-bottom: 1px solid var(--border-soft); }
+  .ap-activate-rings { padding: var(--s-5); }
+  .ap-activate-rings__grid { grid-template-columns: repeat(2, 1fr); gap: var(--s-4); }
+}
+@media (max-width: 480px) {
+  .ap-activate-bar__back span { display: none; }
+  .ap-activate-bar__progress-eta,
+  .ap-activate-bar__progress-dot { display: none; }
+  .ap-activate-rings__grid { grid-template-columns: 1fr 1fr; }
+}
+
+.ap-sr {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0,0,0,0);
+  white-space: nowrap; border: 0;
+}
+.ap-sr:focus { position: static; width: auto; height: auto; margin: 0; clip: auto; white-space: normal; padding: var(--s-2); }

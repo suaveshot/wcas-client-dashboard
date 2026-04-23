@@ -57,7 +57,15 @@ def verify(token: str) -> dict[str, Any] | None:
 
 
 def cookie_kwargs() -> dict[str, Any]:
-    """Safe defaults for Set-Cookie: HttpOnly + SameSite=Strict + Secure in prod."""
+    """Safe defaults for Set-Cookie: HttpOnly + SameSite=Lax + Secure in prod.
+
+    SameSite=Lax (not Strict) is required so the session survives third-party
+    redirect-backs like OAuth callbacks. Strict would block the cookie on the
+    top-level GET from accounts.google.com -> our /auth/oauth/google/callback,
+    kicking the user to /auth/login mid-flow. Lax still blocks the cookie on
+    cross-site POST/subresource requests, which is the CSRF-relevant case -
+    all our state-changing endpoints are POST and gate there.
+    """
     domain = os.getenv("COOKIE_DOMAIN") or None
     # Local dev over http needs Secure=False. Prod sets PRODUCTION=true.
     secure = os.getenv("PRODUCTION", "false").lower() == "true"
@@ -65,7 +73,7 @@ def cookie_kwargs() -> dict[str, Any]:
         "key": os.getenv("COOKIE_NAME", "wcas_session"),
         "max_age": SESSION_MAX_AGE_SECONDS,
         "httponly": True,
-        "samesite": "strict",
+        "samesite": "lax",
         "secure": secure,
         "domain": domain,
         "path": "/",

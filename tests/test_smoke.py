@@ -26,10 +26,54 @@ def test_healthz_ok():
     assert body["status"] == "ok"
 
 
-def test_activate_placeholder():
-    r = client.get("/activate")
+def test_dev_login_issues_session(monkeypatch):
+    monkeypatch.setenv("PRODUCTION", "false")
+    fresh = TestClient(app)  # Fresh client so the issued cookie doesn't leak.
+    r = fresh.get("/auth/dev-login", follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"] == "/activate"
+    assert "wcas_session=" in r.headers.get("set-cookie", "")
+
+
+def test_dev_login_404_in_production(monkeypatch):
+    monkeypatch.setenv("PRODUCTION", "true")
+    fresh = TestClient(app)
+    r = fresh.get("/auth/dev-login", follow_redirects=False)
+    assert r.status_code == 404
+
+
+def test_dev_login_rejects_invalid_tenant(monkeypatch):
+    monkeypatch.setenv("PRODUCTION", "false")
+    fresh = TestClient(app)
+    r = fresh.get("/auth/dev-login?tenant=../escape", follow_redirects=False)
+    assert r.status_code == 400
+
+
+def test_activate_requires_auth():
+    # /activate is behind require_tenant as of Day 4. Anonymous hits
+    # land on /auth/login via the 401 redirect handler.
+    r = client.get("/activate", follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"] == "/auth/login"
+
+
+def test_activate_renders_wizard_for_authed_tenant(tmp_path, monkeypatch):
+    from dashboard_app.services import sessions
+
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    cookie = sessions.issue(tenant_id="acme", email="owner@acme.com", role="client")
+    authed = TestClient(app)
+    authed.cookies.set("wcas_session", cookie)
+    r = authed.get("/activate")
     assert r.status_code == 200
-    assert "Day 3" in r.text
+    # Locked first-message copy from okay-larry-so-flickering-lollipop.md
+    assert "Welcome in" in r.text
+    assert "14 roles" in r.text
+    # Connect button present when no google credential stored yet.
+    assert "/auth/oauth/google/start" in r.text
+    # No vendor names leaked into rendered HTML.
+    for banned in ("Claude", "Opus", "Anthropic", "OpenAI", "GPT"):
+        assert banned not in r.text, f"{banned!r} leaked into /activate"
 
 
 def test_pipelines_api_requires_auth():

@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Set up {{ tenant_name }} | WCAS</title>
+    <meta name="theme-color" content="#FBFAF7">
+    <meta name="robots" content="noindex">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <link rel="stylesheet" href="/static/styles.css?v=20260423b">
+</head>
+<body class="ap-activate-body">
+<a href="#ap-activate-main" class="ap-sr">Skip to main content</a>
+
+<header class="ap-activate-bar" role="banner">
+    <a class="ap-activate-bar__back" href="/dashboard" aria-label="Back to dashboard">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+        <span>Dashboard</span>
+    </a>
+    <div class="ap-activate-bar__progress" role="status" aria-live="polite">
+        <span class="ap-activate-bar__progress-label" data-activate-progress-label>Step 1 of 14</span>
+        <span class="ap-activate-bar__progress-dot" aria-hidden="true">·</span>
+        <span class="ap-activate-bar__progress-eta" data-activate-progress-eta>About 12 min left</span>
+    </div>
+    <div class="ap-activate-bar__save" data-activate-save>
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+        <span>Saved</span>
+    </div>
+</header>
+<div class="ap-activate-progress" aria-hidden="true">
+    <div class="ap-activate-progress__fill" data-activate-progress-fill style="width: 7%"></div>
+</div>
+
+<main id="ap-activate-main" class="ap-activate-main" role="main">
+    {# ------------- LEFT: chat column ------------- #}
+    <section class="ap-activate-chat" aria-label="Setup conversation">
+        <div class="ap-activate-chat__stream" data-activate-chat>
+            <div class="ap-activate-msg ap-activate-msg--asst">
+                <div class="ap-activate-msg__glyph" aria-hidden="true">&#10022;</div>
+                <div class="ap-activate-msg__body">
+                    <p class="ap-activate-msg__first">
+                        Welcome in. I'm going to set up 14 roles for you, one at a time.
+                    </p>
+                    <p>
+                        Most owners finish in about 45 minutes. If you need to stop, I save as we go.
+                        Ready to start with the easy one?
+                    </p>
+                </div>
+            </div>
+
+            {% if connect_error %}
+            <div class="ap-activate-msg ap-activate-msg--asst">
+                <div class="ap-activate-msg__glyph" aria-hidden="true">&#10022;</div>
+                <div class="ap-activate-msg__body">
+                    <p class="ap-activate-msg__first">
+                        {% if connect_error == "access_denied" %}
+                        No worries. We can connect your Google account whenever you're ready.
+                        {% elif connect_error == "no_refresh" %}
+                        Google didn't send back a refresh token. That usually means the account
+                        already had consent. Try again, or revoke the old consent at
+                        myaccount.google.com/permissions and try once more.
+                        {% else %}
+                        Something went sideways on the Google connect. Let me know and I'll take another look.
+                        {% endif %}
+                    </p>
+                </div>
+            </div>
+            {% endif %}
+
+            {% if google_connected and probe_summary and probe_summary.ok %}
+            <div class="ap-activate-msg ap-activate-msg--asst" data-activate-success-msg>
+                <div class="ap-activate-msg__glyph" aria-hidden="true">&#10022;</div>
+                <div class="ap-activate-msg__body">
+                    <p class="ap-activate-msg__first">
+                        Connected. I just checked your Google.
+                    </p>
+                    <ul class="ap-activate-proof">
+                        {% set s = probe_summary.summary %}
+                        {% if s.gbp and s.gbp.total_review_count %}
+                        <li>{{ s.gbp.total_review_count }} reviews averaging
+                            {{ "%.1f"|format(s.gbp.average_rating) }} stars across
+                            {{ s.gbp.location_count }} location{{ "s" if s.gbp.location_count != 1 else "" }}.</li>
+                        {% elif s.gbp and s.gbp.account_count %}
+                        <li>{{ s.gbp.account_count }} Business Profile
+                            {{ "accounts" if s.gbp.account_count != 1 else "account" }} ready.</li>
+                        {% endif %}
+                        {% if s.gsc and s.gsc.site_count %}
+                        <li>{{ s.gsc.site_count }} site{{ "s" if s.gsc.site_count != 1 else "" }} tracked in Search Console.</li>
+                        {% endif %}
+                        {% if s.ga4 and s.ga4.property_count %}
+                        <li>{{ s.ga4.property_count }} Analytics
+                            {{ "properties" if s.ga4.property_count != 1 else "property" }} connected.</li>
+                        {% endif %}
+                        {% if s.gmail and s.gmail.email %}
+                        <li>Gmail ready for draft replies as {{ s.gmail.email }}.</li>
+                        {% endif %}
+                        {% if s.calendar and s.calendar.calendar_count %}
+                        <li>{{ s.calendar.calendar_count }} calendar{{ "s" if s.calendar.calendar_count != 1 else "" }} available for booking.</li>
+                        {% endif %}
+                    </ul>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+
+        {# Prompt bar. Before activation agent lands (Step 5), this is a
+           simple call-to-action. After Step 5 it becomes a real input. #}
+        <div class="ap-activate-action">
+            {% if not google_connected %}
+            <a class="ap-activate-connect" href="/auth/oauth/google/start" data-activate-connect-google>
+                <span class="ap-activate-connect__ico" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+                </span>
+                Connect your Google account
+            </a>
+            <p class="ap-activate-action__hint">Connects 3 roles in one click: Google Business, SEO, and Reviews.</p>
+            {% else %}
+            <a class="ap-activate-connect ap-activate-connect--done" href="#" aria-disabled="true">
+                <span class="ap-activate-connect__ico" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                </span>
+                Google connected
+            </a>
+            <p class="ap-activate-action__hint">Chat-based setup for the other 11 roles is coming on Day 5.</p>
+            {% endif %}
+        </div>
+    </section>
+
+    {# ------------- RIGHT: ring grid ------------- #}
+    <aside class="ap-activate-rings" aria-label="Role readiness grid" data-activate-rings
+           data-connected-hint="{{ connected_hint }}">
+        <h2 class="ap-activate-rings__title">Your {{ roster|length }} roles</h2>
+        <p class="ap-activate-rings__sub">Credentials &rarr; Config &rarr; Connected &rarr; First run.</p>
+        <div class="ap-activate-rings__grid">
+            {% for role in roster %}
+            <div class="ap-activate-ring" data-activate-ring data-role-slug="{{ role.slug }}" data-role-step="{{ role.step or 'pending' }}">
+                <svg viewBox="0 0 120 120" width="96" height="96" aria-hidden="true" class="ap-activate-ring__svg">
+                    {# Four sub-arcs, starting from 12 o'clock, clockwise. Each arc is a
+                       stroke-dasharray segment of a circle of radius 52, circumference 326.7.
+                       Arc fill states are driven by the data-role-step attribute + JS. #}
+                    <g transform="rotate(-90 60 60)">
+                        <circle class="ap-activate-ring__arc ap-activate-ring__arc--1" cx="60" cy="60" r="52"
+                                fill="none" stroke-width="8" stroke-linecap="butt"
+                                stroke-dasharray="77.7 249" stroke-dashoffset="0"></circle>
+                        <circle class="ap-activate-ring__arc ap-activate-ring__arc--2" cx="60" cy="60" r="52"
+                                fill="none" stroke-width="8" stroke-linecap="butt"
+                                stroke-dasharray="77.7 249" stroke-dashoffset="-81.7"></circle>
+                        <circle class="ap-activate-ring__arc ap-activate-ring__arc--3" cx="60" cy="60" r="52"
+                                fill="none" stroke-width="8" stroke-linecap="butt"
+                                stroke-dasharray="77.7 249" stroke-dashoffset="-163.4"></circle>
+                        <circle class="ap-activate-ring__arc ap-activate-ring__arc--4" cx="60" cy="60" r="52"
+                                fill="none" stroke-width="8" stroke-linecap="butt"
+                                stroke-dasharray="77.7 249" stroke-dashoffset="-245.1"></circle>
+                    </g>
+                </svg>
+                <div class="ap-activate-ring__label">{{ role.name }}</div>
+                <div class="ap-activate-ring__step" data-activate-ring-step>
+                    {% if role.step == "first_run" %}Running{% elif role.step == "connected" %}Connected{% elif role.step == "config" %}Configuring{% elif role.step == "credentials" %}Credentials set{% else %}Not started{% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </aside>
+</main>
+
+<script defer src="/static/activate.js?v=20260423b"></script>
+</body>
+</html>

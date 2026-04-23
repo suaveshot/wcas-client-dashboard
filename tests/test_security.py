@@ -60,7 +60,7 @@ def test_session_rejects_empty_cookie():
 def test_cookie_kwargs_has_security_defaults():
     kw = sessions.cookie_kwargs()
     assert kw["httponly"] is True
-    assert kw["samesite"] == "strict"
+    assert kw["samesite"] == "lax"  # Lax required for OAuth redirect-back; see sessions.py
     assert kw["max_age"] > 0
 
 
