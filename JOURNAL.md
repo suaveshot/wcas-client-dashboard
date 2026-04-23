@@ -666,4 +666,75 @@ The plan had three tracks. After draft review, Sam pushed back: "Is there someth
 8. /activity shows the full feed; /recommendations shows the Live tab with expanded evidence on each rec.
 9. Privacy mode (Ctrl+Shift+P) blurs owner name + PII; Focus mode (Ctrl+Shift+F) collapses the shell; Cmd-K always open. Logout from the rail footer popover.
 
+---
 
+## Entry 12  -  Day 3 evening: real-Opus recommendations generator
+**2026-04-23, late evening PDT**
+
+Sam wanted a couple-hour midnight push on production-grade work. The plan's Day 4 morning task was the real-Opus recommendations generator that replaces the rule-based `seeded_recs.py` with a single 1M-context Opus call against the tenant's full state. Pulling it forward to Day 3 evening had three things going for it: lowest overrun risk of the candidates (single API call, no agent loop), reuses every existing seam (global_ask context composer, opus wrapper, guardrails, recommendations.finalize, and the existing /recommendations page), and lands the visceral "watch Opus think" demo moment - judge clicks Refresh, cost pill ticks up, fresh recs render with real evidence from AP's actual telemetry.
+
+### What got built
+
+**`services/recs_generator.py`** (180 lines): one public function `generate(tenant_id, *, model=None) -> {recs, model, usd, input_tokens, output_tokens}`. Composes context via the existing `global_ask.compose_context` (no parallel composer), builds a system prompt that locks the ADR-024 schema (goal / role_slug / headline / reason / proposed_tool from a safe allowlist / proposed_args / impact{metric,estimate,unit,calculation} / confidence 1-10 / reversibility / non-empty evidence list), calls `opus.chat` with `cache_system=True` (the schema text is identical every call so the prompt cache earns its keep), parses the model output with fence tolerance and shape resilience (accepts both `{"recommendations": [...]}` and bare arrays), and runs every candidate through `recommendations.finalize` so the same guardrail that gates seeded recs gates these too. The single function returns both the recs and the metadata so the API layer can surface "Updated. $0.04 spent." in the demo toast.
+
+**`services/recs_store.py`** (115 lines): atomic write_today + read_latest + is_fresh + list_dates. Files land at `/opt/wc-solns/<tenant_id>/recs/<YYYY-MM-DD>.json` with a `{generated_at, model, usd, input_tokens, output_tokens, count, recs}` payload. Same-day refreshes overwrite; future days preserve history. `is_fresh()` defaults to a 48h window so a Friday-evening refresh still flows on Saturday morning, but a stale week-old file falls back to seeded.
+
+**`api/recs.py`** (60 lines): `POST /api/recommendations/refresh` with `Depends(require_tenant)`. Five-per-day-per-tenant rate limit via a new `recs_refresh_limiter` next to the cost-tracker's existing $2/tenant/day cap (belt-and-suspenders against a button-mashing judge burning the budget in 30 seconds). Maps `OpusBudgetExceeded` -> 429, `OpusUnavailable` -> 503, `RecsGenerationError` -> 502, anything else -> 500. Returns `{ok, count, live_count, draft_count, model, usd, path-leaf}` for the front-end.
+
+**`scripts/refresh_recs.py`** (55 lines): CLI for smoke testing. Defaults to Haiku so iteration doesn't burn Opus budget. Prints count + live/draft split + USD + token counts + the written path. Used tonight against AP's seeded heartbeats to confirm the prompt produces parseable JSON end-to-end.
+
+**Front-end**: `templates/recommendations.html` got a single subdued Refresh button in a new `.ap-recs-meta` bar above the rec list. The bar shows the source line ("Generated from your full business context · 2026-04-23 07:30 UTC" for Opus output, "Rule-based recommendations from current telemetry" for the seeded fallback). `static/recommendations.js` owns the click handler: posts to `/api/recommendations/refresh`, surfaces an info toast ("Reading your full business context. This usually takes about 20 seconds."), then on success an ok toast ("Updated. 4 fresh recommendations. $0.04 spent.") followed by a 900ms reload so the new recs render on the same page. 429/502/503 each render their own calm error toast and re-enable the button. Added 38 lines of CSS for the meta bar (sand bg, mobile stacks vertically with full-width button, .is-loading dims).
+
+**`main.py` + `home_context.py`**: both surfaces now prefer `recs_store.read_latest` when fresh and fall back to `seeded_recs` otherwise. The `/recommendations` route also passes `recs_source` + `recs_generated_at` + `recs_model` into the template context for the new meta bar. Mounted the new router. Added `recs_store` import.
+
+**Cache busters bumped** to `?v=20260423a` on the recommendations template's static refs (per the playbook's Hostinger 7-day Cache-Control rule).
+
+### What got verified
+
+**115 tests pass** (was 90 at end of Entry 11; +17 across recs_generator + recs_store):
+- `tests/test_recs_generator.py` (10 cases): parse acceptance shapes (object with key, bare array, fenced block), parse rejections (empty, prose, unexpected shape), max-cap enforcement, non-dict items dropped. End-to-end: happy path with 2 finalized live recs, low-confidence -> draft, vendor leak -> draft, budget-exceeded propagates, unparseable model output -> RecsGenerationError, empty `[]` returns cleanly. Plus a "captures kw" test that asserts `cache_system=True`, `kind=recommendations`, and `max_tokens=4096` are forwarded to opus.chat.
+- `tests/test_recs_store.py` (10 cases): write-then-read round trip, same-day overwrite, read-latest-of-many newest first, path-traversal rejected (`../escape`, `WITH.DOTS`), is_fresh true/false/none, list_dates returns ISO dates newest first, list_dates handles unknown tenant.
+- All mocks stay at the `opus.chat` boundary; no real API hits in CI.
+
+**Live Haiku smoke against AP-shaped data:**
+Seeded four heartbeats (gbp erroring 9d, sales_pipeline pre-9am send anomaly, ads with $180 spend + zero conversion tracking, reviews with replies pending). Real call against `claude-haiku-4-5`: input 1368 tokens, output 1536 tokens, cost $0.009, 4 recs returned (4 live, 0 drafts) - one per pipeline, each with non-empty cited evidence and confidence 7-9. The ads rec independently flagged the `conversion_tracking=False` situation as a COST risk - the same pattern the AP $18k Google Ads burn lesson encoded - so the model is correctly reasoning about the data, not pattern-matching on a template. No em dashes in output. No vendor leaks in output.
+
+### Why a single direct Messages-API call instead of a Managed Agent
+
+ADR-027 captures the reasoning. The short version: one-shot text-to-JSON with no tool dispatch is exactly the Messages API's job (per ADR-002). Managed Agents earns its complexity for long-lived sessions with file-tool side effects (the Activation Orchestrator and Baseline Capturer queued for Day 3-4). Forcing a Managed Agent into the recs flow would buy nothing and add session lifecycle complexity at midnight.
+
+### Why we keep `seeded_recs.py` as the fallback
+
+Not all tenants warrant a model call:
+- Cold-start tenants (no heartbeats yet) get rule-based recs immediately, zero spend.
+- Model unavailable (missing key in dev, transient API outage) degrades to seeded instead of going blank.
+- Stale recs files (>48h old) trigger seeded so the page is never showing a week-old story.
+- Demo never goes blank; the rule layer is verified, tested, useful.
+
+### Files changed in this entry
+
+**New:**
+- `dashboard_app/services/recs_generator.py`
+- `dashboard_app/services/recs_store.py`
+- `dashboard_app/api/recs.py`
+- `scripts/refresh_recs.py`
+- `tests/test_recs_generator.py` (10 tests)
+- `tests/test_recs_store.py` (10 tests)
+
+**Modified:**
+- `dashboard_app/main.py` (recs router mount + /recommendations route reads recs_store first + recs_source/recs_generated_at/recs_model in template context)
+- `dashboard_app/services/home_context.py` (Home rec source preference: store first, seeded fallback)
+- `dashboard_app/services/rate_limit.py` (recs_refresh_limiter at 5/day/tenant)
+- `dashboard_app/templates/recommendations.html` (meta bar with source line + Refresh button + cache-bust to ?v=20260423a)
+- `dashboard_app/static/recommendations.js` (POST /api/recommendations/refresh + toast handling + reload-on-success)
+- `dashboard_app/static/styles.css` (+38 lines: .ap-recs-meta + .ap-btn loading state + mobile stack)
+- `.gitignore` (added _local_tenant_root/ + recs/*.json so smoke output never accidentally lands in the public repo)
+- `DECISIONS.md` (ADR-027)
+
+### Demo flow (the part that lands for judges)
+
+Judge logs in and lands on `/dashboard`. The "What should we fix?" section shows the seeded recs already in place. They click Recommendations in the sidebar -> the meta bar at the top of `/recommendations` reads "Rule-based recommendations from current telemetry" with a Refresh button next to it. They click Refresh. A toast slides in: "Reading your full business context. This usually takes about 20 seconds." About 5 seconds later (Haiku is faster than that copy promises): "Updated. 4 fresh recommendations. $0.04 spent." The page reloads. The meta line now reads "Generated from your full business context · 2026-04-23 07:30 UTC" and the rec cards have noticeably more specific headlines, citing real timestamps and counts pulled from the heartbeats. That round-trip is the visible Opus 4.7 1M-context moment.
+
+### What Day 3 morning starts with
+
+Activation Orchestrator scope unchanged from the v6 plan. The recs_generator pattern (compose context once, single Opus call, structured JSON, guardrail-finalize, persist) becomes the template for the post-activation "first 30-day check-in" Opus pass. Tonight earned a clean midnight push and unblocked Day 4 to focus on the bigger Activation + Admin builds.

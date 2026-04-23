@@ -27,9 +27,10 @@ from .api import heartbeat as heartbeat_api
 from .api import outgoing as outgoing_api
 from .api import pipelines as pipelines_api
 from .api import receipts as receipts_api
+from .api import recs as recs_api
 from .api import settings as settings_api
 from .api import tenant as tenant_api
-from .services import activity_feed, errors, goals as goals_svc, home_context, outgoing_queue, role_detail, security_headers, seeded_recs, telemetry, tenant_ctx, tenant_prefs
+from .services import activity_feed, errors, goals as goals_svc, home_context, outgoing_queue, recs_store, role_detail, security_headers, seeded_recs, telemetry, tenant_ctx, tenant_prefs
 from .services.tenant_ctx import current_session
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -66,6 +67,7 @@ app.include_router(attention_api.router)
 app.include_router(goals_api.router)
 app.include_router(outgoing_api.router)
 app.include_router(receipts_api.router)
+app.include_router(recs_api.router)
 app.include_router(settings_api.router)
 app.include_router(tenant_api.router)
 
@@ -244,7 +246,20 @@ async def recommendations_page(request: Request):
     tenant_id = sess["tid"] if sess else "americal_patrol"
     is_admin = bool(sess and sess.get("rl") == "admin")
 
-    all_recs = seeded_recs.build_with_drafts(tenant_id, limit=12)
+    # Prefer the most recent Opus refresh if one exists and is fresh (<48h);
+    # fall back to the deterministic seeded recs so the surface is never empty.
+    fresh = recs_store.read_latest(tenant_id)
+    source = "opus"
+    generated_at = None
+    rec_model = None
+    if recs_store.is_fresh(fresh):
+        all_recs = list(fresh.get("recs") or [])
+        generated_at = fresh.get("generated_at")
+        rec_model = fresh.get("model")
+    else:
+        all_recs = seeded_recs.build_with_drafts(tenant_id, limit=12)
+        source = "seeded"
+
     live = [r for r in all_recs if not r.get("draft")]
     drafts = [r for r in all_recs if r.get("draft")] if is_admin else []
 
@@ -257,6 +272,9 @@ async def recommendations_page(request: Request):
             "live_recs": live,
             "draft_recs": drafts,
             "show_drafts": is_admin,
+            "recs_source": source,
+            "recs_generated_at": generated_at,
+            "recs_model": rec_model,
         },
     )
 

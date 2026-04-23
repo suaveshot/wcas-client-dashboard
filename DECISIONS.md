@@ -455,4 +455,50 @@ Short crisp entries for each major technical decision. Format: **what, why, alte
 
 ---
 
+## ADR-027  -  Recommendations generator: single direct Messages-API call, seeded fallback retained
+**Date:** 2026-04-23 evening PDT
+**Status:** Accepted, shipped Day 3 evening
+
+**Decision:** The real-Opus recommendations generator is a single direct Messages-API call (not a Managed Agent). Each refresh composes the tenant's full state via the existing `global_ask.compose_context`, sends one cache-flagged system prompt that locks the ADR-024 schema, parses the model's JSON output, and finalizes every candidate through `recommendations.finalize` (which runs the same guardrail that gates seeded recs). The deterministic `seeded_recs.py` rule-based generator is retained as a fallback for cold-start tenants, model-unavailable conditions, parse failures, and stale (>48h) refresh files.
+
+**Why a Messages-API call and not a Managed Agent:**
+- One-shot text-to-JSON with no tool dispatch, no file-tool side effects, and no session lifecycle is the core Messages-API use case (per ADR-002).
+- A Managed Agent's session + environment + events overhead is wasted for a measured-in-seconds call.
+- Lower-latency path to the user; the Refresh button finishes in ~5-20 seconds rather than 30+.
+- Predictable cost per call (~$0.005 Haiku, ~$0.05 Opus 4.7 against AP's full state) - no compounding session events.
+- Managed Agents earns its complexity for the Activation Orchestrator and Baseline Capturer (Day 3-4) where conversation state and file-tool writes matter.
+
+**Why keep the seeded fallback:**
+- Cold-start tenants (no heartbeats) shouldn't trigger an Opus call to receive zero useful recs.
+- Model unavailable in dev (no API key) or transient API outage degrades to seeded instead of going blank.
+- Stale recs (>48h) trigger seeded so the page never shows a week-old story.
+- The seeded layer is verified, tested, and useful; deleting it now would be premature.
+- The fallback is invisible to the judge in the demo - they always click Refresh and get the Opus path.
+
+**Why JSON-mode prompt (not native structured output):**
+- Anthropic's Messages API doesn't expose a JSON-mode flag the same way OpenAI does; the right pattern is a tight system prompt + an example output + a tolerant parser.
+- Our parser accepts both `{"recommendations": [...]}` and bare arrays, plus optional `\`\`\`json` fenced wrappers, which absorbs every observed deviation in practice.
+- Falling back to seeded on `RecsGenerationError` means a parse failure degrades gracefully rather than 500-ing the page.
+
+**Why `cache_system=True`:**
+- The schema and rule text never changes between calls. Anthropic's prompt cache (~5 minute window) makes repeat refreshes within a session near-free.
+- Even across days, the cache rarely needs to refill more than once per few hours given multi-tenant traffic.
+
+**Why a separate 5/day/tenant rate limiter on top of the cost cap:**
+- The $2/tenant/day cost cap is the hard floor, but a button-mash from a curious judge could burn it in 30 seconds.
+- 5/day is generous for the demo (Sam will click 1-2 times, judges 1-3 times) and stops the runaway case without ever triggering for normal use.
+
+**Trade-offs:**
+- Tighter coupling to Anthropic's response shape than a Managed Agent would have (we own the parser).
+- No streaming today; the toast says "about 20 seconds" and Haiku finishes in ~5, so the UX absorbs it. If we add streaming later it goes through `opus.chat`, not the API layer.
+- No multi-call refinement (e.g. "the model's output failed schema, ask it to retry"). One call, finalize, done. Adds round-trip latency and budget for marginal quality gain at hackathon scale.
+
+**Post-hackathon extensions:**
+- Streaming for the Refresh demo so the judge watches recs render incrementally instead of all at once on reload.
+- "What changed since last week?" view that diffs `recs_store.list_dates()` outputs over time.
+- Outcome tracking (per ADR-024 future work): after a configurable window per rec, an Opus pass reads before+after telemetry and writes a win/wash/loss verdict to `dashboard_decisions.jsonl`.
+- Auto-tightening of `REC_MIN_CONFIDENCE` when a rec type's 30-day win rate drops below 60%.
+
+---
+
 *More ADRs added as decisions are made during the build.*

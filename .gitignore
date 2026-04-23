@@ -26,6 +26,7 @@ service_account*.json
 
 # Tenant data  -  never commit any per-client state
 /opt/
+_local_tenant_root/
 tenant_config.json
 brand.json
 goals.json
@@ -35,6 +36,7 @@ dashboard_decisions.jsonl
 kb/
 state/*.json
 state_snapshot/
+recs/*.json
 
 # Cost tracking + logs
 costs.jsonl

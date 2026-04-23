@@ -3336,6 +3336,42 @@ body.ap-receipts-drawer-open { overflow: hidden; }
   transition: width var(--t-base) var(--ease);
 }
 
+.ap-recs-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  margin-top: var(--s-4);
+  padding: var(--s-3) var(--s-4);
+  background: var(--bg-alt);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-md);
+}
+.ap-recs-meta__source {
+  font-size: 13px;
+  color: var(--ink-muted);
+  line-height: 1.4;
+}
+.ap-recs-meta__source[data-source="opus"] {
+  color: var(--ink-soft);
+}
+.ap-recs-meta .ap-btn {
+  flex-shrink: 0;
+}
+.ap-recs-meta .ap-btn.is-loading {
+  opacity: 0.7;
+  cursor: progress;
+}
+@media (max-width: 640px) {
+  .ap-recs-meta {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .ap-recs-meta .ap-btn {
+    justify-content: center;
+  }
+}
+
 .ap-recs-tabs {
   display: flex;
   gap: var(--s-2);

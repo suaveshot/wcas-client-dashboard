@@ -40,3 +40,7 @@ login_limiter = SlidingWindowLimiter(max_events=5, window_seconds=900)  # 5 / 15
 heartbeat_limiter = SlidingWindowLimiter(max_events=120, window_seconds=60)  # 120 / min / tenant
 ask_limiter = SlidingWindowLimiter(max_events=20, window_seconds=60)  # 20 / min / tenant for /api/ask
 ask_global_limiter = SlidingWindowLimiter(max_events=2, window_seconds=60)  # 2 / min / tenant for /api/ask_global (1M-context expensive)
+# Belt-and-suspenders next to the $2/tenant/day cost cap. Stops button-mash
+# from burning a day's budget in 30 seconds. 5/day is generous in practice;
+# the demo only needs 2 or 3 successful clicks.
+recs_refresh_limiter = SlidingWindowLimiter(max_events=5, window_seconds=86400)  # 5 / day / tenant for /api/recommendations/refresh

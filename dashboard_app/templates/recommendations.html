@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/styles.css?v=20260422d">
+    <link rel="stylesheet" href="/static/styles.css?v=20260423a">
 </head>
 <body>
 <a href="#ap-main" class="ap-sr">Skip to main content</a>
@@ -46,6 +46,21 @@
                 <span class="ap-approvals__eyebrow">What should we fix</span>
                 <h1 class="ap-approvals__title">Recommendations</h1>
                 <p class="ap-approvals__lead">Each rec carries its evidence, confidence, and the tool it would use. Nothing applies without your click, and every action is undoable for 10 seconds.</p>
+
+                <div class="ap-recs-meta">
+                    <span class="ap-recs-meta__source" data-source="{{ recs_source }}">
+                        {% if recs_source == 'opus' %}
+                          Generated from your full business context
+                          {% if recs_generated_at %} &middot; {{ recs_generated_at[:16].replace('T', ' ') }} UTC{% endif %}
+                        {% else %}
+                          Rule-based recommendations from current telemetry
+                        {% endif %}
+                    </span>
+                    <button type="button" class="ap-btn ap-btn--ghost" id="ap-refresh-recs" aria-label="Refresh recommendations against the latest telemetry">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                        <span>Refresh recommendations</span>
+                    </button>
+                </div>
 
                 {% if show_drafts %}
                 <div class="ap-recs-tabs" role="tablist">
@@ -103,8 +118,8 @@
     </div>
 </div>
 <div class="ap-toast-stack" aria-live="polite" aria-atomic="true"></div>
-<script src="/static/undo.js?v=20260422d" defer></script>
-<script src="/static/shell.js?v=20260422d" defer></script>
-<script src="/static/recommendations.js?v=20260422d" defer></script>
+<script src="/static/undo.js?v=20260423a" defer></script>
+<script src="/static/shell.js?v=20260423a" defer></script>
+<script src="/static/recommendations.js?v=20260423a" defer></script>
 </body>
 </html>
