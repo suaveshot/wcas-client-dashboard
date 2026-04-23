@@ -214,11 +214,15 @@
                 askText.textContent = 'Ask this role: "' + queryText + '"';
                 askLi.dataset.action = 'ask-here';
                 askLi.dataset.question = queryText;
-            } else if (onRolePage) {
+            } else if (onRolePage && !queryText) {
                 askText.textContent = 'Type your question, Enter to ask this role';
                 askLi.dataset.action = 'noop';
+            } else if (queryText) {
+                askText.textContent = 'Ask your business: "' + queryText + '"';
+                askLi.dataset.action = 'ask-global';
+                askLi.dataset.question = queryText;
             } else {
-                askText.textContent = 'Open a role card, then type ? to ask about it';
+                askText.textContent = 'Type a question, Enter to ask your whole business';
                 askLi.dataset.action = 'noop';
             }
             askLabel.appendChild(askText);
@@ -313,7 +317,97 @@
             window.location.assign(li.dataset.href);
         } else if (action === 'ask-here') {
             askCurrentRole(li.dataset.question);
+        } else if (action === 'ask-global') {
+            askGlobal(li.dataset.question);
         }
+    }
+
+    function askGlobal(question) {
+        question = (question || '').trim();
+        if (!question) return;
+        renderPaletteAnswer({state: 'loading'});
+
+        fetch('/api/ask_global', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({question: question}),
+        })
+        .then(function (r) {
+            if (r.status === 429) {
+                return r.json().then(function (d) { throw new Error(d.error || 'Take a breath.'); });
+            }
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json();
+        })
+        .then(function (data) {
+            renderPaletteAnswer({state: 'answer', data: data, question: question});
+        })
+        .catch(function (err) {
+            renderPaletteAnswer({state: 'error', message: err.message, question: question});
+        });
+    }
+
+    function renderPaletteAnswer(opts) {
+        while (paletteList.firstChild) paletteList.removeChild(paletteList.firstChild);
+        paletteItems = [];
+
+        var li = document.createElement('li');
+        li.className = 'ap-palette__answer';
+        li.dataset.action = 'noop';
+
+        if (opts.state === 'loading') {
+            var loading = document.createElement('span');
+            loading.className = 'ap-palette__answer-loading';
+            loading.textContent = 'Thinking across your whole business...';
+            li.appendChild(loading);
+        } else if (opts.state === 'error') {
+            var err = document.createElement('span');
+            err.className = 'ap-palette__answer-error';
+            err.textContent = opts.message || 'Could not reach the assistant.';
+            li.appendChild(err);
+        } else {
+            var data = opts.data || {};
+            var qLine = document.createElement('div');
+            qLine.className = 'ap-palette__answer-question';
+            qLine.textContent = 'Q: ' + (opts.question || '');
+            li.appendChild(qLine);
+
+            var aText = document.createElement('div');
+            aText.className = 'ap-palette__answer-text';
+            aText.textContent = data.answer || '(no answer)';
+            li.appendChild(aText);
+
+            if (data.sources && data.sources.length) {
+                var chipRow = document.createElement('div');
+                chipRow.className = 'ap-palette__answer-chips';
+                data.sources.slice(0, 6).forEach(function (src) {
+                    var chip = document.createElement('span');
+                    chip.className = 'ap-palette__source-chip';
+                    chip.textContent = (src.source || 'source') + ' · ' + (src.label || '');
+                    chipRow.appendChild(chip);
+                });
+                li.appendChild(chipRow);
+            }
+
+            var foot = document.createElement('div');
+            foot.className = 'ap-palette__answer-foot';
+            if (typeof data.cost_usd === 'number') {
+                var pill = document.createElement('span');
+                pill.className = 'ap-palette__cost-pill';
+                pill.textContent = '$' + data.cost_usd.toFixed(4);
+                foot.appendChild(pill);
+            }
+            var hint = document.createElement('span');
+            hint.className = 'ap-palette__answer-hint';
+            hint.textContent = 'Ask again · Esc to close';
+            foot.appendChild(hint);
+            li.appendChild(foot);
+        }
+
+        paletteList.appendChild(li);
+        paletteItems.push(li);
+        paletteHighlight = 0;
     }
 
     function askCurrentRole(question) {
@@ -361,6 +455,192 @@
         if (!palette) return;
         palette.hidden = true;
         document.body.classList.remove('ap-palette-open');
+    }
+
+    // -----------------------------------------------------------------------
+    // RECEIPTS DRAWER
+    // -----------------------------------------------------------------------
+
+    var receiptsDrawer = null;
+    var receiptsDrawerBody = null;
+    var receiptsDrawerTitle = null;
+
+    function buildReceiptsDrawer() {
+        if (receiptsDrawer) return;
+        receiptsDrawer = document.createElement('div');
+        receiptsDrawer.className = 'ap-receipts-drawer';
+        receiptsDrawer.hidden = true;
+        receiptsDrawer.setAttribute('role', 'dialog');
+        receiptsDrawer.setAttribute('aria-modal', 'true');
+        receiptsDrawer.setAttribute('aria-label', 'Receipts');
+
+        var backdrop = document.createElement('div');
+        backdrop.className = 'ap-receipts-drawer__backdrop';
+        backdrop.addEventListener('click', closeReceiptsDrawer);
+        receiptsDrawer.appendChild(backdrop);
+
+        var panel = document.createElement('aside');
+        panel.className = 'ap-receipts-drawer__panel';
+
+        var head = document.createElement('header');
+        head.className = 'ap-receipts-drawer__head';
+
+        receiptsDrawerTitle = document.createElement('h2');
+        receiptsDrawerTitle.className = 'ap-receipts-drawer__title';
+        receiptsDrawerTitle.textContent = 'Receipts';
+        head.appendChild(receiptsDrawerTitle);
+
+        var closeBtn = document.createElement('button');
+        closeBtn.type = 'button';
+        closeBtn.className = 'ap-receipts-drawer__close';
+        closeBtn.setAttribute('aria-label', 'Close');
+        closeBtn.textContent = '✕';
+        closeBtn.addEventListener('click', closeReceiptsDrawer);
+        head.appendChild(closeBtn);
+
+        panel.appendChild(head);
+
+        var lead = document.createElement('p');
+        lead.className = 'ap-receipts-drawer__lead';
+        lead.textContent = 'Every outbound message this role sent on your behalf. Privacy mode blurs recipient details.';
+        panel.appendChild(lead);
+
+        receiptsDrawerBody = document.createElement('div');
+        receiptsDrawerBody.className = 'ap-receipts-drawer__body';
+        panel.appendChild(receiptsDrawerBody);
+
+        receiptsDrawer.appendChild(panel);
+        document.body.appendChild(receiptsDrawer);
+    }
+
+    function openReceiptsDrawer(pipelineId, roleName) {
+        buildReceiptsDrawer();
+        receiptsDrawer.hidden = false;
+        document.body.classList.add('ap-receipts-drawer-open');
+        receiptsDrawerTitle.textContent = 'Receipts · ' + (roleName || pipelineId);
+        receiptsDrawerBody.textContent = '';
+        var loading = document.createElement('p');
+        loading.className = 'ap-receipts-drawer__loading';
+        loading.textContent = 'Loading the last 25 receipts...';
+        receiptsDrawerBody.appendChild(loading);
+
+        fetch('/api/receipts/' + encodeURIComponent(pipelineId) + '?limit=25', {
+            method: 'GET',
+            credentials: 'same-origin',
+        })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function (data) { renderReceipts(data.receipts || []); })
+        .catch(function (err) { renderReceiptsError(err.message); });
+    }
+
+    function closeReceiptsDrawer() {
+        if (!receiptsDrawer) return;
+        receiptsDrawer.hidden = true;
+        document.body.classList.remove('ap-receipts-drawer-open');
+    }
+
+    function renderReceiptsError(msg) {
+        receiptsDrawerBody.textContent = '';
+        var err = document.createElement('p');
+        err.className = 'ap-receipts-drawer__error';
+        err.textContent = 'Could not load receipts: ' + msg;
+        receiptsDrawerBody.appendChild(err);
+    }
+
+    function renderReceipts(rows) {
+        receiptsDrawerBody.textContent = '';
+        if (!rows.length) {
+            var empty = document.createElement('p');
+            empty.className = 'ap-receipts-drawer__empty';
+            empty.textContent = 'No receipts yet. They start accumulating on this role\'s first send.';
+            receiptsDrawerBody.appendChild(empty);
+            return;
+        }
+        rows.forEach(function (row) {
+            var card = document.createElement('article');
+            card.className = 'ap-receipt';
+
+            var head = document.createElement('div');
+            head.className = 'ap-receipt__head';
+
+            var when = document.createElement('span');
+            when.className = 'ap-receipt__when';
+            when.textContent = formatTs(row.ts);
+            head.appendChild(when);
+
+            var channel = document.createElement('span');
+            channel.className = 'ap-receipt__channel';
+            channel.textContent = row.channel || 'message';
+            head.appendChild(channel);
+
+            if (row.recipient_hint) {
+                var recipient = document.createElement('span');
+                recipient.className = 'ap-receipt__recipient ap-priv';
+                recipient.textContent = ' to ' + row.recipient_hint;
+                head.appendChild(recipient);
+            }
+
+            card.appendChild(head);
+
+            if (row.subject) {
+                var subj = document.createElement('div');
+                subj.className = 'ap-receipt__subject';
+                subj.textContent = row.subject;
+                card.appendChild(subj);
+            }
+
+            var body = document.createElement('pre');
+            body.className = 'ap-receipt__body';
+            var text = row.body || '';
+            if (text.length > 500) {
+                body.textContent = text.slice(0, 500) + '...';
+                var readMore = document.createElement('button');
+                readMore.type = 'button';
+                readMore.className = 'ap-receipt__read-more';
+                readMore.textContent = 'Read full';
+                readMore.addEventListener('click', function () {
+                    body.textContent = text;
+                    readMore.remove();
+                });
+                card.appendChild(body);
+                card.appendChild(readMore);
+            } else {
+                body.textContent = text;
+                card.appendChild(body);
+            }
+
+            if (typeof row.cost_usd === 'number' && row.cost_usd > 0) {
+                var cost = document.createElement('span');
+                cost.className = 'ap-receipt__cost';
+                cost.textContent = '$' + row.cost_usd.toFixed(4) + ' to generate';
+                card.appendChild(cost);
+            }
+
+            receiptsDrawerBody.appendChild(card);
+        });
+    }
+
+    function formatTs(iso) {
+        if (!iso) return '';
+        try {
+            var d = new Date(iso);
+            if (isNaN(d.getTime())) return iso;
+            var now = new Date();
+            var same = d.toDateString() === now.toDateString();
+            var time = d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+            if (same) return 'Today ' + time;
+            return d.toLocaleDateString() + ' ' + time;
+        } catch (e) { return iso; }
+    }
+
+    function wireReceiptsTriggers() {
+        document.querySelectorAll('.ap-receipts-trigger').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                var pipelineId = btn.dataset.pipelineId || '';
+                var roleName = btn.dataset.roleName || pipelineId;
+                openReceiptsDrawer(pipelineId, roleName);
+            });
+        });
     }
 
     // -----------------------------------------------------------------------
@@ -509,6 +789,11 @@
 
     function wireKeybinds() {
         document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape' && receiptsDrawer && !receiptsDrawer.hidden) {
+                e.preventDefault();
+                closeReceiptsDrawer();
+                return;
+            }
             var mod = e.metaKey || e.ctrlKey;
             if (!mod) return;
             if (e.key === 'k' || e.key === 'K') {
@@ -547,8 +832,88 @@
         wireTopbarAsk();
         wireQuickChips();
         wireAttentionBanner();
+        wireReceiptsTriggers();
+        wireRecentAsks();
+        wireRailTrigger();
+        wireAccountPopover();
         wireFeedToggle();
         wireKeybinds();
+    }
+
+    // -----------------------------------------------------------------------
+    // RECENT ASK PILLS
+    // -----------------------------------------------------------------------
+
+    function wireRecentAsks() {
+        document.querySelectorAll('.ap-shell__rail-recent-pill').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                var q = btn.dataset.question || (btn.textContent || '').trim();
+                openPalette('? ' + q);
+            });
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // MOBILE RAIL TRIGGER (hamburger)
+    // -----------------------------------------------------------------------
+
+    function wireRailTrigger() {
+        var trigger = document.querySelector('.ap-shell__rail-trigger');
+        var rail = document.getElementById('ap-shell-rail');
+        if (!trigger || !rail) return;
+        trigger.addEventListener('click', function () {
+            var open = rail.classList.toggle('ap-shell__rail--open');
+            trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+        });
+        // Close the rail if a nav link inside it is activated.
+        rail.addEventListener('click', function (e) {
+            var a = e.target.closest('a');
+            if (!a) return;
+            rail.classList.remove('ap-shell__rail--open');
+            trigger.setAttribute('aria-expanded', 'false');
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // ACCOUNT POPOVER (sidebar footer -> log out)
+    // -----------------------------------------------------------------------
+
+    function wireAccountPopover() {
+        var btn = document.querySelector('.ap-shell__rail-account-btn');
+        if (!btn) return;
+
+        var pop = document.createElement('div');
+        pop.className = 'ap-account-popover';
+        pop.hidden = true;
+        pop.setAttribute('role', 'menu');
+
+        var logout = document.createElement('form');
+        logout.method = 'post';
+        logout.action = '/auth/logout';
+        logout.style.margin = '0';
+
+        var logoutBtn = document.createElement('button');
+        logoutBtn.type = 'submit';
+        logoutBtn.className = 'ap-account-popover__item';
+        logoutBtn.setAttribute('role', 'menuitem');
+        logoutBtn.textContent = 'Log out';
+        logout.appendChild(logoutBtn);
+        pop.appendChild(logout);
+
+        btn.parentElement.appendChild(pop);
+
+        btn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            pop.hidden = !pop.hidden;
+            btn.setAttribute('aria-expanded', pop.hidden ? 'false' : 'true');
+        });
+        document.addEventListener('click', function (e) {
+            if (pop.hidden) return;
+            if (!pop.contains(e.target) && e.target !== btn && !btn.contains(e.target)) {
+                pop.hidden = true;
+                btn.setAttribute('aria-expanded', 'false');
+            }
+        });
     }
 
     if (document.readyState === 'loading') {

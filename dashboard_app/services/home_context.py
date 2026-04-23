@@ -29,7 +29,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from . import activity_feed, telemetry
+from . import activity_feed, hero_stats, notifications, recent_asks, seeded_recs, telemetry
 
 
 _SPARK_UP = "M0,22 L15,18 L30,20 L45,14 L60,16 L75,10 L90,12 L105,7 L120,9 L135,5 L150,7 L165,3 L180,5 L200,2"
@@ -112,9 +112,11 @@ def build(tenant_id: str, owner_name: str = "", tenant_display: str = "") -> dic
     initials = _initials(owner_name) if owner_name else _initials(display_name)
 
     roles = []
+    snapshots_by_pid: dict[str, float] = {}
     for snap in snapshots:
         pid = snap["pipeline_id"]
         last_run_text, age_hours = _humanize_ago(snap.get("last_run", ""))
+        snapshots_by_pid[pid] = age_hours
         state, state_text, grade, spark = _state_from_status(snap.get("status", ""), age_hours)
         roles.append({
             "slug": pid.replace("_", "-"),
@@ -159,6 +161,8 @@ def build(tenant_id: str, owner_name: str = "", tenant_display: str = "") -> dic
             "this page will wake up as soon as data flows."
         )
 
+    live_recs = seeded_recs.build(tenant_id, limit=3)
+
     return {
         "tenant_name": display_name,
         "owner_name": owner_name or "there",
@@ -166,14 +170,17 @@ def build(tenant_id: str, owner_name: str = "", tenant_display: str = "") -> dic
         "today_date": datetime.now().strftime("%Y-%m-%d"),
         "refresh_ago": "just now" if has_live else "waiting",
         "next_refresh": "on the next pipeline run",
-        "pinned_roles": _pinned_from_roles(roles),
+        "pinned_roles": _pinned_from_roles(roles, snapshots_by_pid),
+        "rail_health": _rail_health(roles),
+        "recent_asks": recent_asks.recent(tenant_id, n=3),
+        "notifications_count": notifications.count(tenant_id),
         "attention": attention,
         "narrative": narrative,
-        "hero_stats": _hero_stats_placeholder(len(roles)),
+        "hero_stats": hero_stats.build(tenant_id),
         "roles": roles or _fallback_roles_when_empty(),
         "feed": activity_feed.build(tenant_id),
-        "recommendations": [],  # Day 4: real recommendations
-        "total_recs": 0,
+        "recommendations": live_recs,
+        "total_recs": len(live_recs),
     }
 
 
@@ -190,12 +197,48 @@ def _initials(name: str) -> str:
     return (parts[0][0] + parts[-1][0]).upper()
 
 
-def _pinned_from_roles(roles: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    # Day 3+ this becomes user-configurable. Today: pin the first three active.
-    return [
-        {"slug": r["slug"], "name": r["name"], "active": r["state"] == "active", "auto": True}
-        for r in roles if r["state"] == "active"
-    ][:3]
+def _pinned_from_roles(roles: list[dict[str, Any]], snapshots_by_pid: dict[str, float]) -> list[dict[str, Any]]:
+    """Pinned role shortcut list for the sidebar. Each includes its state
+    and a `pulse` flag (true if the role ran within the last 60 seconds).
+
+    Day 3+ this becomes user-configurable. Today: pin the first three active.
+    snapshots_by_pid maps pipeline_id -> age_hours so we can compute pulse.
+    """
+    pinned = []
+    for r in roles:
+        if r["state"] != "active":
+            continue
+        underlying = r["slug"].replace("-", "_")
+        age_h = snapshots_by_pid.get(underlying, 999.0)
+        pulse = age_h < (1.0 / 60.0)  # fired within the last 60 seconds
+        pinned.append({
+            "slug": r["slug"],
+            "name": r["name"],
+            "active": True,
+            "auto": True,
+            "state": r["state"],
+            "pulse": pulse,
+        })
+        if len(pinned) >= 3:
+            break
+    return pinned
+
+
+def _rail_health(roles: list[dict[str, Any]]) -> dict[str, int]:
+    """One-line status-at-a-glance counts for the rail health strip."""
+    counts = {"total": 0, "running": 0, "attention": 0, "error": 0, "paused": 0}
+    for r in roles:
+        counts["total"] += 1
+        state = r.get("state", "")
+        if state == "active":
+            counts["running"] += 1
+        elif state == "attention":
+            counts["attention"] += 1
+        elif state == "error":
+            counts["error"] += 1
+        elif state == "paused":
+            counts["paused"] += 1
+    return counts
 
 
 def _hero_stats_placeholder(n_roles: int) -> list[dict[str, Any]]:

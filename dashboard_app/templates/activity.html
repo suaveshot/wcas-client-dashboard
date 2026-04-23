@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Activity | {{ tenant_name }}</title>
+    <meta name="robots" content="noindex">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/styles.css?v=20260422d">
+</head>
+<body>
+<a href="#ap-main" class="ap-sr">Skip to main content</a>
+<div class="ap-shell">
+    <aside id="ap-shell-rail" class="ap-shell__rail" aria-label="Primary navigation">
+        <div class="ap-shell__rail-brand">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg>
+            <span>{{ tenant_name }}</span>
+        </div>
+        <nav aria-label="Main">
+            <ul class="ap-shell__rail-nav">
+                <li><a class="ap-shell__rail-item" href="/dashboard">Home</a></li>
+                <li><a class="ap-shell__rail-item" href="/roles">Roles</a></li>
+                <li><a class="ap-shell__rail-item" href="/approvals">Approvals</a></li>
+                <li><a class="ap-shell__rail-item ap-shell__rail-item--active" href="/activity">Activity</a></li>
+                <li><a class="ap-shell__rail-item" href="/recommendations">Recommendations</a></li>
+                <li><a class="ap-shell__rail-item" href="/goals">Goals</a></li>
+                <li><a class="ap-shell__rail-item" href="/settings">Settings</a></li>
+            </ul>
+        </nav>
+    </aside>
+    <div class="ap-shell__main">
+        <header class="ap-shell__topbar">
+            <button type="button" class="ap-shell__rail-trigger" aria-label="Open navigation" aria-controls="ap-shell-rail" aria-expanded="false">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="20" height="20" aria-hidden="true"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+            </button>
+            <div class="ap-shell__breadcrumb">
+                <a href="/dashboard" style="color:var(--ink-muted);text-decoration:none;">Home</a>
+                <span class="ap-shell__breadcrumb-sep">/</span>
+                <span class="ap-shell__breadcrumb-current">Activity</span>
+            </div>
+        </header>
+        <main id="ap-main" class="ap-canvas">
+            <section class="ap-activity">
+                <span class="ap-approvals__eyebrow">What happened behind the scenes</span>
+                <h1 class="ap-approvals__title">Activity</h1>
+                <p class="ap-approvals__lead">Every automated action and every owner decision, newest first. This is the transparency feed at full length.</p>
+
+                <div class="ap-feed" role="log" aria-live="polite">
+                    {% for row in feed %}
+                    <article class="ap-feed__row">
+                        <span class="ap-feed__time">{{ row.time }}</span>
+                        <svg class="ap-feed__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="{{ row.icon_path }}"/>
+                        </svg>
+                        <div class="ap-feed__body">
+                            <div class="ap-feed__text">
+                                <a class="ap-feed__role-pill" href="/roles/{{ row.role_slug }}">{{ row.role }}</a>
+                                {{ row.action }}
+                            </div>
+                            {% if row.link %}
+                            <a class="ap-feed__link" href="{{ row.link }}">{{ row.link_text }} &rarr;</a>
+                            {% endif %}
+                        </div>
+                        <span style="font-size:12px;color:var(--ink-faint);">{{ row.relative }}</span>
+                    </article>
+                    {% endfor %}
+                </div>
+            </section>
+        </main>
+    </div>
+</div>
+<div class="ap-toast-stack" aria-live="polite" aria-atomic="true"></div>
+<script src="/static/undo.js?v=20260422d" defer></script>
+<script src="/static/shell.js?v=20260422d" defer></script>
+</body>
+</html>

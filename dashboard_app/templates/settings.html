@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Settings | {{ tenant_name }}</title>
+    <meta name="robots" content="noindex">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/styles.css?v=20260422d">
+</head>
+<body>
+<a href="#ap-main" class="ap-sr">Skip to main content</a>
+<div class="ap-shell">
+    <aside id="ap-shell-rail" class="ap-shell__rail" aria-label="Primary navigation">
+        <div class="ap-shell__rail-brand">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg>
+            <span>{{ tenant_name }}</span>
+        </div>
+        <nav aria-label="Main">
+            <ul class="ap-shell__rail-nav">
+                <li><a class="ap-shell__rail-item" href="/dashboard">Home</a></li>
+                <li><a class="ap-shell__rail-item" href="/roles">Roles</a></li>
+                <li><a class="ap-shell__rail-item" href="/approvals">Approvals</a></li>
+                <li><a class="ap-shell__rail-item" href="/activity">Activity</a></li>
+                <li><a class="ap-shell__rail-item" href="/recommendations">Recommendations</a></li>
+                <li><a class="ap-shell__rail-item" href="/goals">Goals</a></li>
+                <li><a class="ap-shell__rail-item ap-shell__rail-item--active" href="/settings">Settings</a></li>
+            </ul>
+        </nav>
+    </aside>
+    <div class="ap-shell__main">
+        <header class="ap-shell__topbar">
+            <button type="button" class="ap-shell__rail-trigger" aria-label="Open navigation" aria-controls="ap-shell-rail" aria-expanded="false">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="20" height="20" aria-hidden="true"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+            </button>
+            <div class="ap-shell__breadcrumb">
+                <a href="/dashboard" style="color:var(--ink-muted);text-decoration:none;">Home</a>
+                <span class="ap-shell__breadcrumb-sep">/</span>
+                <span class="ap-shell__breadcrumb-current">Settings</span>
+            </div>
+        </header>
+        <main id="ap-main" class="ap-canvas">
+            <section class="ap-settings" data-prefs='{{ prefs_json }}'>
+                <span class="ap-approvals__eyebrow">Preferences</span>
+                <h1 class="ap-approvals__title">Settings</h1>
+                <p class="ap-approvals__lead">Small levers, all saved instantly. Everything here is private to your account.</p>
+
+                <fieldset class="ap-settings__group">
+                    <legend class="ap-settings__legend">Profile</legend>
+                    <div class="ap-settings__row">
+                        <span class="ap-settings__label">Owner</span>
+                        <span class="ap-settings__value ap-priv">{{ owner_name }}</span>
+                    </div>
+                    <div class="ap-settings__row">
+                        <span class="ap-settings__label">Email</span>
+                        <span class="ap-settings__value ap-priv">{{ owner_email }}</span>
+                    </div>
+                </fieldset>
+
+                <fieldset class="ap-settings__group">
+                    <legend class="ap-settings__legend">Privacy &amp; display</legend>
+                    <label class="ap-settings__toggle">
+                        <input type="checkbox" data-pref="privacy_default" {% if prefs.privacy_default %}checked{% endif %}>
+                        <span>Start every session with privacy mode on</span>
+                    </label>
+                    <label class="ap-settings__toggle">
+                        <input type="checkbox" data-pref="feed_dense_default" {% if prefs.feed_dense_default %}checked{% endif %}>
+                        <span>Default the activity feed to Dense view</span>
+                    </label>
+                </fieldset>
+
+                <fieldset class="ap-settings__group">
+                    <legend class="ap-settings__legend">Notifications</legend>
+                    <label class="ap-settings__toggle">
+                        <input type="checkbox" data-pref="email_digest" {% if prefs.email_digest %}checked{% endif %}>
+                        <span>Weekly recap email on Sundays</span>
+                    </label>
+                    <label class="ap-settings__toggle">
+                        <input type="checkbox" data-pref="errors_only" {% if prefs.errors_only %}checked{% endif %}>
+                        <span>Only email me when something errors</span>
+                    </label>
+                </fieldset>
+
+                <fieldset class="ap-settings__group">
+                    <legend class="ap-settings__legend">Approve before send</legend>
+                    <p class="ap-settings__hint">When a pipeline is on here, every outgoing message queues for your review in <a href="/approvals">Approvals</a> before it goes out.</p>
+                    {% if pipelines %}
+                    {% for p in pipelines %}
+                    <label class="ap-settings__toggle" data-pipeline="{{ p.pipeline_id }}">
+                        <input type="checkbox" data-pref="require_approval"
+                               data-pipeline-id="{{ p.pipeline_id }}"
+                               {% if p.require_approval %}checked{% endif %}>
+                        <span>{{ p.display }}</span>
+                    </label>
+                    {% endfor %}
+                    {% else %}
+                    <p class="ap-settings__hint">No pipelines detected yet. Toggles appear here as soon as your first heartbeat lands.</p>
+                    {% endif %}
+                </fieldset>
+
+                <fieldset class="ap-settings__group ap-settings__group--danger">
+                    <legend class="ap-settings__legend">Danger zone</legend>
+                    <p class="ap-settings__hint">Pausing stops every pipeline from pushing anything until you turn it back on. Safe - nothing is deleted.</p>
+                    <button type="button" class="ap-btn ap-btn--ghost ap-settings__danger-btn" id="ap-pause-all">Pause every role</button>
+                </fieldset>
+            </section>
+        </main>
+    </div>
+</div>
+<div class="ap-toast-stack" aria-live="polite" aria-atomic="true"></div>
+<script src="/static/undo.js?v=20260422d" defer></script>
+<script src="/static/shell.js?v=20260422d" defer></script>
+<script src="/static/settings.js?v=20260422d" defer></script>
+</body>
+</html>

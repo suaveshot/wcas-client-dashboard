@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Goals | {{ tenant_name }}</title>
+    <meta name="robots" content="noindex">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/styles.css?v=20260422d">
+</head>
+<body>
+<a href="#ap-main" class="ap-sr">Skip to main content</a>
+<div class="ap-shell">
+    <aside id="ap-shell-rail" class="ap-shell__rail" aria-label="Primary navigation">
+        <div class="ap-shell__rail-brand">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg>
+            <span>{{ tenant_name }}</span>
+        </div>
+        <nav aria-label="Main">
+            <ul class="ap-shell__rail-nav">
+                <li><a class="ap-shell__rail-item" href="/dashboard">Home</a></li>
+                <li><a class="ap-shell__rail-item" href="/roles">Roles</a></li>
+                <li><a class="ap-shell__rail-item" href="/approvals">Approvals</a></li>
+                <li><a class="ap-shell__rail-item" href="/activity">Activity</a></li>
+                <li><a class="ap-shell__rail-item" href="/recommendations">Recommendations</a></li>
+                <li><a class="ap-shell__rail-item ap-shell__rail-item--active" href="/goals">Goals</a></li>
+                <li><a class="ap-shell__rail-item" href="/settings">Settings</a></li>
+            </ul>
+        </nav>
+    </aside>
+    <div class="ap-shell__main">
+        <header class="ap-shell__topbar">
+            <button type="button" class="ap-shell__rail-trigger" aria-label="Open navigation" aria-controls="ap-shell-rail" aria-expanded="false">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="20" height="20" aria-hidden="true"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+            </button>
+            <div class="ap-shell__breadcrumb">
+                <a href="/dashboard" style="color:var(--ink-muted);text-decoration:none;">Home</a>
+                <span class="ap-shell__breadcrumb-sep">/</span>
+                <span class="ap-shell__breadcrumb-current">Goals</span>
+            </div>
+        </header>
+        <main id="ap-main" class="ap-canvas">
+            <section class="ap-goals">
+                <span class="ap-approvals__eyebrow">What we're measuring</span>
+                <h1 class="ap-approvals__title">Goals</h1>
+                <p class="ap-approvals__lead">Pin up to three clear goals. Every recommendation anchors to them, and the Home hero tracks progress.</p>
+
+                <ul class="ap-goals__list">
+                    {% for g in goals_list %}
+                    <li class="ap-goal-card" data-goal-id="{{ g.id }}">
+                        <div class="ap-goal-card__head">
+                            <span class="ap-goal-card__metric">{{ g.metric|upper }}</span>
+                            <button type="button" class="ap-goal-card__remove" aria-label="Remove this goal" data-goal-id="{{ g.id }}">✕</button>
+                        </div>
+                        <div class="ap-goal-card__title">{{ g.title }}</div>
+                        <div class="ap-goal-card__numbers">
+                            <span class="ap-priv">{{ g.current|int }}</span> of
+                            <span class="ap-priv">{{ g.target|int }}</span>
+                            <span class="ap-goal-card__timeframe">({{ g.timeframe }})</span>
+                        </div>
+                        <div class="ap-goal-card__bar" aria-hidden="true">
+                            <span style="width: {{ g.percent }}%"></span>
+                        </div>
+                    </li>
+                    {% endfor %}
+                </ul>
+
+                {% if can_add %}
+                <form class="ap-goal-form" id="ap-goal-form">
+                    <h2 class="ap-goal-form__title">Pin a new goal</h2>
+                    <label>Title
+                        <input type="text" name="title" maxlength="120" required placeholder="Get 20 new 5-star reviews">
+                    </label>
+                    <label>Metric
+                        <select name="metric" required>
+                            <option value="leads">Leads</option>
+                            <option value="reviews">Reviews</option>
+                            <option value="calls">Calls</option>
+                            <option value="revenue">Revenue</option>
+                            <option value="other">Other</option>
+                        </select>
+                    </label>
+                    <label>Target
+                        <input type="number" name="target" min="1" required placeholder="20">
+                    </label>
+                    <label>Timeframe
+                        <select name="timeframe" required>
+                            <option value="30d">30 days</option>
+                            <option value="60d">60 days</option>
+                            <option value="90d" selected>90 days</option>
+                        </select>
+                    </label>
+                    <button type="submit" class="ap-btn ap-btn--primary">Pin goal</button>
+                </form>
+                {% else %}
+                <p class="ap-settings__hint">You have three goals pinned (the cap). Remove one to add a new one.</p>
+                {% endif %}
+            </section>
+        </main>
+    </div>
+</div>
+<div class="ap-toast-stack" aria-live="polite" aria-atomic="true"></div>
+<script src="/static/undo.js?v=20260422d" defer></script>
+<script src="/static/shell.js?v=20260422d" defer></script>
+<script src="/static/goals.js?v=20260422d" defer></script>
+</body>
+</html>

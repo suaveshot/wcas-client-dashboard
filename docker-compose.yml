@@ -1,3 +1,23 @@
+# WCAS Client Dashboard - single-container compose.
+#
+# Deployed on the shared Hostinger VPS behind a shared Caddy reverse proxy.
+# The proxy (not Traefik) owns TLS + host routing at the host level and
+# forwards to 127.0.0.1:8000 inside the VPS. Keep this file in sync with
+# `dashboard_app/services/tenant_manager.py` paths.
+#
+# Runtime env (loaded from .env - chmod 600, never commit):
+#   ANTHROPIC_API_KEY        required for Opus calls
+#   WCAS_DEFAULT_MODEL       default claude-haiku-4-5 (dev); Opus for demos
+#   SESSION_SECRET           itsdangerous signing key (32+ bytes url-safe)
+#   AIRTABLE_PAT, AIRTABLE_BASE_ID, AIRTABLE_CLIENTS_TABLE_ID
+#   HEARTBEAT_SHARED_SECRET  PC-side pipelines must match
+#   GMAIL_APP_PASSWORD       magic-link sender
+#   SUPPORT_EMAIL_FROM       info@westcoastautomationsolutions.com
+#   COOKIE_DOMAIN            dashboard.westcoastautomationsolutions.com
+#   PRODUCTION=true          unlocks HSTS + Secure cookie flags
+#   DAILY_DEV_CAP            $/day platform-wide (default 20)
+#   DAILY_TENANT_CAP         $/day per tenant (default 2.00)
+
 services:
   dashboard:
     build: .
@@ -7,16 +27,10 @@ services:
       - .env
     # Tenant data lives at /opt/wc-solns/<tenant>/ inside the container
     # (the Dockerfile creates that directory and chowns it to the app user).
-    # Keep this aligned with services/tenant_manager.py paths.
     volumes:
       - tenant-data:/opt/wc-solns
     ports:
       - "127.0.0.1:8000:8000"
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.dashboard.rule=Host(`dashboard.westcoastautomationsolutions.com`)"
-      - "traefik.http.routers.dashboard.entrypoints=websecure"
-      - "traefik.http.routers.dashboard.tls.certresolver=letsencrypt"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz"]
       interval: 30s

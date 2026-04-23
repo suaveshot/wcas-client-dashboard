@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/styles.css?v=20260422c">
+    <link rel="stylesheet" href="/static/styles.css?v=20260422d">
 </head>
 <body>
 <a href="#ap-main" class="ap-sr">Skip to main content</a>
@@ -16,7 +16,7 @@
 <div class="ap-shell">
 
     {# Rail #}
-    <aside class="ap-shell__rail" aria-label="Primary navigation">
+    <aside id="ap-shell-rail" class="ap-shell__rail" aria-label="Primary navigation">
         <div class="ap-shell__rail-brand">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg>
             <span>Americal Patrol</span>
@@ -51,6 +51,9 @@
     <div class="ap-shell__main">
 
         <header class="ap-shell__topbar">
+            <button type="button" class="ap-shell__rail-trigger" aria-label="Open navigation" aria-controls="ap-shell-rail" aria-expanded="false">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="20" height="20" aria-hidden="true"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+            </button>
             <div class="ap-shell__breadcrumb">
                 <a href="/dashboard" style="color:var(--ink-muted);text-decoration:none;">Home</a>
                 <span class="ap-shell__breadcrumb-sep">/</span>
@@ -108,6 +111,19 @@
                         <pre class="ap-role-detail__logs-pre">{{ log_tail }}</pre>
                     </details>
                     {% endif %}
+
+                    <div class="ap-role-detail__receipts-row">
+                        <button class="ap-btn ap-btn--ghost ap-receipts-trigger"
+                                type="button"
+                                data-pipeline-id="{{ role_slug }}"
+                                data-role-name="{{ role_name }}">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" aria-hidden="true" width="16" height="16"><path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z"/></svg>
+                            Show the last 25 receipts
+                        </button>
+                        <span class="ap-role-detail__receipts-hint">
+                            The actual text of everything this role sent on your behalf.
+                        </span>
+                    </div>
                 {% else %}
                     <p class="ap-role-detail__empty">
                         This role is connected and queued for its first run. Its next scheduled execution will push the first heartbeat; this page wakes up automatically when that lands.
@@ -139,8 +155,8 @@
 
 <div class="ap-toast-stack" aria-live="polite" aria-atomic="true"></div>
 
-<script src="/static/undo.js?v=20260422c" defer></script>
-<script src="/static/shell.js?v=20260422c" defer></script>
-<script src="/static/ask.js?v=20260422c" defer></script>
+<script src="/static/undo.js?v=20260422d" defer></script>
+<script src="/static/shell.js?v=20260422d" defer></script>
+<script src="/static/ask.js?v=20260422d" defer></script>
 </body>
 </html>

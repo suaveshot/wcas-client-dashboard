@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from ..services import guardrails, opus, telemetry
+from ..services import guardrails, opus, rate_limit, telemetry
 from ..services.tenant_ctx import require_tenant
 
 log = logging.getLogger("dashboard.ask")
@@ -51,6 +51,9 @@ def _pipeline_snapshot(tenant_id: str, role_slug: str) -> dict | None:
 
 @router.post("/api/ask")
 async def api_ask(body: AskRequest, tenant_id: str = Depends(require_tenant)) -> JSONResponse:
+    if not rate_limit.ask_limiter.allow(tenant_id):
+        raise HTTPException(status_code=429, detail="Slow down a moment; try again in a minute.")
+
     snapshot = _pipeline_snapshot(tenant_id, body.role_slug)
     if snapshot is None:
         return JSONResponse(
@@ -74,6 +77,7 @@ async def api_ask(body: AskRequest, tenant_id: str = Depends(require_tenant)) ->
             temperature=0.3,
             kind="ask_pipeline",
             note=f"role={body.role_slug}",
+            cache_system=True,
         )
     except opus.OpusBudgetExceeded as exc:
         raise HTTPException(status_code=429, detail=f"budget reached today: {exc}")

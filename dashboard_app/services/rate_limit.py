@@ -38,3 +38,5 @@ class SlidingWindowLimiter:
 
 login_limiter = SlidingWindowLimiter(max_events=5, window_seconds=900)  # 5 / 15min / email
 heartbeat_limiter = SlidingWindowLimiter(max_events=120, window_seconds=60)  # 120 / min / tenant
+ask_limiter = SlidingWindowLimiter(max_events=20, window_seconds=60)  # 20 / min / tenant for /api/ask
+ask_global_limiter = SlidingWindowLimiter(max_events=2, window_seconds=60)  # 2 / min / tenant for /api/ask_global (1M-context expensive)

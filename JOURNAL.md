@@ -579,3 +579,91 @@ Morning and afternoon landed the heavy Day 2 work (auth, Opus wrapper, home cont
 
 Activation Orchestrator Managed Agent scope, unchanged. The shell primitives, toast/undo, palette, and attention banner wiring mean Day 3's activation chat UI and Day 4's admin surface both inherit the client-facing UX without reinventing it. Every interactive element on /dashboard now either does something real or routes through the undo-gated decision log; no dead buttons left.
 
+---
+
+## Entry 11  -  Agency-level audit + four killer features + real sidebar pages
+**2026-04-22 evening (late) / running through early Day 3**
+
+Sam's direction for this pass was blunt: "I want this to feel like a real dashboard. We're doing good work but we need to work on stuff to make it production, agency-level ready." The polish pass in Entry 10 closed the shipped surfaces' gaps; this entry filled the emptiness BEHIND the shell. Sidebar links landed on stub pages, hero stats were hardcoded placeholders, recommendations were an empty array, the bell showed a hardcoded "3." Click-through demo had five pages that just said "shipping later."
+
+The plan had three tracks. After draft review, Sam pushed back: "Is there something in the plan that is really different that people may not expect to be in this kind of product but people won't be able to live without?" That reframing produced Track 0 - four killer features that leverage the underlying platform capabilities in ways no other agency dashboard does.
+
+### Track 0 - the four killer features
+
+**0A. Global Ask (1M-context Opus query against the whole business).** Owner opens Cmd-K, types `?` + any question, gets a plain-English cited answer in 2-4 sentences. The composer at `services/global_ask.py` assembles every heartbeat snapshot + last 50 decisions + goals + brand + KB + receipts summary into a single structured prompt. Fits comfortably in Opus 4.7's 1M context; no RAG, no chunking. Prompt-cached via the new `cache_system=True` kwarg on `opus.chat()` so repeat asks within 5 minutes are near-free. Rate-limited at 2/min/tenant. New `/api/ask_global` router, palette inline-renders the answer block with source chips + cost pill.
+
+**0B. Receipts Drawer.** Per-pipeline `/opt/wc-solns/<tenant>/receipts/<pipeline>/<yyyy-mm-dd>.jsonl` with the actual text of every auto-sent message. `services/receipts.py` + `/api/receipts` + `/api/receipts/<pipeline_id>`. Role detail page got a "Show the last 25 receipts" button under the timeline that opens a slide-in drawer. Privacy mode blurs recipient/PII via `.ap-priv` spans; body stays legible. Seed script `scripts/seed_receipts.py` pre-writes 8 realistic AP receipts for demo. Trust primitive: the question "what did you send in my name?" now has a click-through answer.
+
+**0C. Draft & Approve.** Per-pipeline "Approve before send" toggle in Settings. When on, pipelines queue their drafts to `/opt/wc-solns/<tenant>/outgoing/pending.jsonl` instead of firing. `/approvals` inbox renders each pending draft with urgency dots (green 0-2h, amber 2-12h, red 12h+), Approve/Edit/Skip buttons, and keyboard shortcuts `A`/`E`/`S`/`J`/`K`. Every approve has a 10-second undo via apToast; guardrails run twice (on queue + on approve) so edited drafts can't slip em-dashes or vendor leaks past. Approved drafts flow to receipts; skipped drafts log to decisions.jsonl. `scripts/seed_drafts.py` pre-seeds 6 realistic drafts with staggered timestamps spanning the urgency colors.
+
+**0D. Sidebar that earns its space.** Each pinned role gets a status dot in the rail (green = ok, amber = attention, red = error, gray = paused). The green dot pulses if the role ran in the last 60 seconds. Rail-top health strip reads `14 roles · 11 running · 2 attention · 1 error` from `home_context._rail_health()`. Recent-asks footer pills show the last 3 global-ask questions (stored in `/opt/wc-solns/<tenant>/recent_asks.jsonl`, cap 30), clicking re-opens the palette with that question. Mobile hamburger trigger fixes the orphaned rail on ≤767px.
+
+### Track 1 - real data behind the shell
+
+- **`services/hero_stats.py`**: Weeks Saved now computes from heartbeat run counts × per-role minutes saved (a tunable table with DAR=10min, SEO=90min, blog=120min, sales-touch=4min, review-reply=3min, etc.). Zero-heartbeat tenant still renders honest "--" placeholders with verified-tips explaining when the number wakes up. Revenue Influenced stays honest-blank pending Airtable Deals wiring; Goal Progress wakes up once `goals.json` exists.
+- **`services/seeded_recs.py`**: rule-based rec generator with three rule families (stale-error >7 days, overdue >3x cadence, `needs_attention=true` payload flag). Every candidate flows through `guardrails.review_recommendation()` + `recommendations.finalize()`. Live recs render on Home; draft recs (guardrail-refused) hide from clients and show on admin's `/recommendations` draft tab. Home "What should we fix?" empty section now gets a brand-voiced clean-state message when nothing flags.
+- **`services/notifications.py`**: real bell badge count from unread decisions + erroring pipelines + stale pending approvals. Home template swapped hardcoded `3` for `{{ notifications_count }}` with `9+` overflow.
+- **Logout popover** in the rail footer (account-menu button + click-outside + aria-haspopup). POSTs to the existing `/auth/logout` route.
+
+### Track 2 - sidebar stubs become real pages
+
+- **`/settings`** renders four sections: Profile (read-only), Privacy & display (two toggles → `tenant_prefs.json`), Notifications (digest + errors-only), Approve before send (per-pipeline toggles). Danger zone has a "Pause every role" button that POSTs `/api/tenant/pause` and writes `status=paused` to tenant_config.json. Every toggle saves immediately with a confirmation flash toast.
+- **`/goals`** renders pinned goals (up to 3) with progress bars + a form to add a new one (title, metric, target, timeframe). DELETE via `/api/goals/<id>` with 10-second undo chip. Hero stat Goal Progress on Home lights up the moment a goal is pinned.
+- **`/activity`** full 80-row transparency feed (reuses `activity_feed.build(tenant_id, max_rows=80)`).
+- **`/recommendations`** tabbed view: Live tab always visible with expanded evidence per rec; Drafts tab admin-only. Each rec card surfaces tool, confidence, reversibility, and impact calc.
+
+### Track 3 - production hygiene
+
+- **`services/security_headers.py`** middleware mounted on every response. CSP on HTML, X-Frame-Options DENY, X-Content-Type-Options nosniff, Referrer-Policy strict-origin-when-cross-origin, Permissions-Policy, HSTS when `PRODUCTION=true`. Skips CSP on `/api/*` (JSON only).
+- **`rate_limit.ask_limiter`** (20/min) added to `/api/ask` - cost-tracker cap still the hard floor, but this prevents runaway clicks from burning daily budget in one minute.
+- **Prompt caching** wired through `opus.chat(cache_system=True)` for both `/api/ask` and `/api/ask_global`. Cache_control ephemeral block on the system prompt; measurable cost drop on repeat queries.
+- **README** refreshed end-to-end: version `0.3.0`, live URL no longer "pending Day 1", Mermaid architecture diagram, new "How Opus 4.7 shows up" table reflecting shipped vs deferred, Platformization seeds section kept.
+- **`docs/judge.md`** new one-page judge quickstart: live URL, try-as-judge click path, keyboard shortcuts table, what-to-try ordering, judging-signals breakdown, troubleshooting.
+- **`docker-compose.yml`** cleaned up: stripped dead Traefik labels (proxy is shared Caddy per journal), added documented env var list in the comment block.
+- **App version bumped** from 0.2.0 → 0.3.0; `/healthz` reflects it.
+
+### What got verified
+
+- **90 tests pass** (was 66 at start of this session; +24 tonight across global_ask, receipts, outgoing_queue, security_headers, and the existing files).
+- Em-dash scan across all source: clean (one slipped into 4 new JS files in the top-of-file comment, rewritten to a hyphen before commit).
+- `/healthz` returns `{"status":"ok","version":"0.3.0"}`.
+- App registers 41 routes cleanly.
+- Vendor-name guard still holds on all rendered HTML.
+
+### Files changed in this entry
+
+**New services:** `global_ask.py`, `receipts.py`, `outgoing_queue.py`, `recent_asks.py`, `hero_stats.py`, `seeded_recs.py`, `notifications.py`, `tenant_prefs.py`, `goals.py` (service), `security_headers.py` (10 total)
+
+**New API routers:** `api/ask_global.py`, `api/receipts.py`, `api/outgoing.py`, `api/settings.py`, `api/goals.py`, `api/tenant.py` (6 total)
+
+**New templates:** `approvals.html`, `settings.html`, `goals.html`, `activity.html`, `recommendations.html` (5 total)
+
+**New static:** `approvals.js`, `settings.js`, `goals.js`, `recommendations.js`
+
+**New scripts:** `seed_receipts.py`, `seed_drafts.py`
+
+**New docs/tests:** `docs/judge.md`, `tests/test_global_ask.py`, `tests/test_receipts.py`, `tests/test_outgoing_queue.py`, `tests/test_security_headers.py`
+
+**Modified:** `main.py` (all new routers mounted, 5 stub handlers rewritten to render real templates, version bump, middleware stack), `home_context.py` (rail_health + pinned pulse + recent_asks + real hero_stats + seeded_recs + notifications_count), `opus.py` (cache_system kwarg), `rate_limit.py` (ask + ask_global limiters), `api/ask.py` (limiter + cache), `templates/home.html` (sidebar polish + real bell badge + clean-state recs), `templates/role_detail.html` (receipts button + hamburger + id), `static/shell.js` (account popover, rail trigger, recent-asks, receipts drawer, global ask render), `static/styles.css` (palette answer block, receipts drawer, approvals, settings, goals, recs-full, rail health strip + dots + pulse, recent-asks pills, account popover), `README.md`, `docker-compose.yml`, `services/home_context.py` imports, `services/global_ask.py` goals fallback copy.
+
+### Still deferred to Day 3-4 (honest scope)
+
+- Activation Orchestrator Managed Agent + 10 tools
+- Sam-only `/admin` operator view (MRR hero, clients grid, kill-switch)
+- Real Opus-written recommendations generator as a Managed Agent (we ship rule-based tonight)
+- Baseline Capturer Managed Agent
+- Per-pipeline wiring of `push_heartbeat.py:request_approval` - the approval queue runs off seeded drafts for demo; AP pipelines don't route through it in production yet
+
+### What the demo now looks like end-to-end
+
+1. Landing page with "Try as a judge" button -> magic-link-style sign-in using the pre-seeded demo@claudejudge.com row.
+2. Home shows 14 real role cards with status dots in the sidebar pulsing on live runs. Hero stats include one real Weeks Saved number with verified-tip math. "What should we fix?" surfaces a rule-based rec against AP's actual telemetry (or a clean-state message if everything's green).
+3. Cmd-K, `?` + "why is my Google Business broken?" - the palette inline-renders a cited answer in 2-4 sentences with the per-call cost pill visible.
+4. Click any role card -> role detail page with timeline + "Show the last 25 receipts" drawer revealing the actual text of every auto-sent message from that pipeline.
+5. /approvals shows pre-seeded drafts with urgency dots. `A` approves with 10s undo; `E` opens an editor; `S` skips.
+6. /settings toggles "Approve before send" on any pipeline with instant save + confirmation toast.
+7. /goals pins a goal; Home hero "Goal Progress" wakes up.
+8. /activity shows the full feed; /recommendations shows the Live tab with expanded evidence on each rec.
+9. Privacy mode (Ctrl+Shift+P) blurs owner name + PII; Focus mode (Ctrl+Shift+F) collapses the shell; Cmd-K always open. Logout from the rail footer popover.
+
+

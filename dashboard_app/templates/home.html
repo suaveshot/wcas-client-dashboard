@@ -12,7 +12,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="/static/styles.css?v=20260422c">
+    <link rel="stylesheet" href="/static/styles.css?v=20260422d">
 </head>
 <body>
 <a href="#ap-main" class="ap-sr">Skip to main content</a>
@@ -20,11 +20,21 @@
 <div class="ap-shell">
 
     {# ============== SIDEBAR ============== #}
-    <aside class="ap-shell__rail" aria-label="Primary navigation">
+    <aside id="ap-shell-rail" class="ap-shell__rail" aria-label="Primary navigation">
         <div class="ap-shell__rail-brand">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg>
             <span>{{ tenant_name }}</span>
         </div>
+
+        {% if rail_health and rail_health.total %}
+        <div class="ap-shell__rail-health" role="status" aria-label="Roles health summary">
+            <span class="ap-rail-health-strong">{{ rail_health.total }}</span> roles ·
+            <span class="ap-rail-health-ok">{{ rail_health.running }}</span> running
+            {% if rail_health.attention %}· <span class="ap-rail-health-warn">{{ rail_health.attention }}</span> attention{% endif %}
+            {% if rail_health.error %}· <span class="ap-rail-health-err">{{ rail_health.error }}</span> error{% endif %}
+            {% if rail_health.paused %}· <span class="ap-rail-health-muted">{{ rail_health.paused }}</span> paused{% endif %}
+        </div>
+        {% endif %}
 
         <nav aria-label="Main">
             <ul class="ap-shell__rail-nav">
@@ -56,19 +66,36 @@
             {% for role in pinned_roles %}
             <li>
                 <a class="ap-shell__rail-pinned-item {% if role.active %}ap-shell__rail-pinned-item--active{% endif %}" href="/roles/{{ role.slug }}">
-                    {{ role.name }}
+                    <span class="ap-shell__rail-dot ap-shell__rail-dot--{{ role.state|default('active') }}{% if role.pulse %} ap-shell__rail-dot--pulse{% endif %}" aria-hidden="true"></span>
+                    <span class="ap-shell__rail-pinned-name">{{ role.name }}</span>
                     {% if role.auto %}<span class="ap-shell__rail-pinned-auto">auto</span>{% endif %}
                 </a>
             </li>
             {% endfor %}
         </ul>
 
+        {% if recent_asks %}
+        <div class="ap-shell__rail-eyebrow ap-shell__rail-eyebrow--recent">Recent asks</div>
+        <ul class="ap-shell__rail-recent">
+            {% for ask in recent_asks %}
+            <li>
+                <button type="button" class="ap-shell__rail-recent-pill" data-question="{{ ask.question }}">
+                    <span class="ap-shell__rail-recent-spark" aria-hidden="true">✦</span>
+                    <span class="ap-shell__rail-recent-text">{{ ask.question }}</span>
+                </button>
+            </li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+
         <div class="ap-shell__rail-footer">
-            <div class="ap-shell__rail-avatar" aria-hidden="true">{{ owner_initials }}</div>
-            <div class="ap-shell__rail-account">
-                <span class="ap-shell__rail-account-name">{{ owner_name }}</span>
-                <span class="ap-shell__rail-account-meta">Plan: Operator</span>
-            </div>
+            <button type="button" class="ap-shell__rail-account-btn" aria-haspopup="menu" aria-label="Account menu">
+                <span class="ap-shell__rail-avatar" aria-hidden="true">{{ owner_initials }}</span>
+                <span class="ap-shell__rail-account">
+                    <span class="ap-shell__rail-account-name ap-priv">{{ owner_name }}</span>
+                    <span class="ap-shell__rail-account-meta">Plan: Operator</span>
+                </span>
+            </button>
         </div>
     </aside>
 
@@ -77,6 +104,9 @@
 
         {# Topbar #}
         <header class="ap-shell__topbar">
+            <button type="button" class="ap-shell__rail-trigger" aria-label="Open navigation" aria-controls="ap-shell-rail" aria-expanded="false">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="20" height="20" aria-hidden="true"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+            </button>
             <div class="ap-shell__breadcrumb">
                 <span>Home</span>
                 <span class="ap-shell__breadcrumb-sep">/</span>
@@ -96,7 +126,7 @@
                 </button>
                 <button class="ap-shell__bell" type="button" aria-label="Notifications">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
-                    <span class="ap-shell__bell-badge">3</span>
+                    {% if notifications_count %}<span class="ap-shell__bell-badge">{{ notifications_count if notifications_count < 10 else '9+' }}</span>{% endif %}
                 </button>
             </div>
         </header>
@@ -282,8 +312,17 @@
                                 </div>
                             </div>
                         </article>
+                        {% else %}
+                        <div class="ap-rec-empty">
+                            <p class="ap-rec-empty__title">Nothing needs your attention right now.</p>
+                            <p class="ap-rec-empty__body">
+                                Your roles are all running within their expected cadence. We'll queue a rec here the moment something drifts.
+                            </p>
+                        </div>
                         {% endfor %}
+                        {% if total_recs %}
                         <a class="ap-rec__see-all" href="/recommendations">See all ({{ total_recs }}) →</a>
+                        {% endif %}
                     </div>
                 </section>
 
@@ -297,8 +336,8 @@
     {# toasts injected here by undo.js #}
 </div>
 
-<script src="/static/undo.js?v=20260422c" defer></script>
-<script src="/static/shell.js?v=20260422c" defer></script>
+<script src="/static/undo.js?v=20260422d" defer></script>
+<script src="/static/shell.js?v=20260422d" defer></script>
 
 </body>
 </html>

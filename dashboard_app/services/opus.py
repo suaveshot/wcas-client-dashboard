@@ -74,8 +74,15 @@ def chat(
     temperature: float = 0.2,
     kind: str = "message",
     note: str | None = None,
+    cache_system: bool = False,
 ) -> OpusResult:
-    """Single-turn chat completion with cost tracking and budget enforcement."""
+    """Single-turn chat completion with cost tracking and budget enforcement.
+
+    When `cache_system=True` and a `system` prompt is provided, the system
+    block is flagged with `cache_control={"type":"ephemeral"}` so repeat
+    calls within ~5 minutes hit Anthropic's prompt cache. Cost savings
+    compound for long system prompts (e.g. the global-ask composer).
+    """
     allowed, reason = cost_tracker.should_allow(tenant_id)
     if not allowed:
         raise OpusBudgetExceeded(reason or "budget exceeded")
@@ -90,7 +97,12 @@ def chat(
         "messages": messages,
     }
     if system:
-        kwargs["system"] = system
+        if cache_system:
+            kwargs["system"] = [
+                {"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}
+            ]
+        else:
+            kwargs["system"] = system
 
     response = client.messages.create(**kwargs)
 

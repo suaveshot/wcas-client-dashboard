@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Recommendations | {{ tenant_name }}</title>
+    <meta name="robots" content="noindex">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/styles.css?v=20260422d">
+</head>
+<body>
+<a href="#ap-main" class="ap-sr">Skip to main content</a>
+<div class="ap-shell">
+    <aside id="ap-shell-rail" class="ap-shell__rail" aria-label="Primary navigation">
+        <div class="ap-shell__rail-brand">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg>
+            <span>{{ tenant_name }}</span>
+        </div>
+        <nav aria-label="Main">
+            <ul class="ap-shell__rail-nav">
+                <li><a class="ap-shell__rail-item" href="/dashboard">Home</a></li>
+                <li><a class="ap-shell__rail-item" href="/roles">Roles</a></li>
+                <li><a class="ap-shell__rail-item" href="/approvals">Approvals</a></li>
+                <li><a class="ap-shell__rail-item" href="/activity">Activity</a></li>
+                <li><a class="ap-shell__rail-item ap-shell__rail-item--active" href="/recommendations">Recommendations</a></li>
+                <li><a class="ap-shell__rail-item" href="/goals">Goals</a></li>
+                <li><a class="ap-shell__rail-item" href="/settings">Settings</a></li>
+            </ul>
+        </nav>
+    </aside>
+    <div class="ap-shell__main">
+        <header class="ap-shell__topbar">
+            <button type="button" class="ap-shell__rail-trigger" aria-label="Open navigation" aria-controls="ap-shell-rail" aria-expanded="false">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="20" height="20" aria-hidden="true"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+            </button>
+            <div class="ap-shell__breadcrumb">
+                <a href="/dashboard" style="color:var(--ink-muted);text-decoration:none;">Home</a>
+                <span class="ap-shell__breadcrumb-sep">/</span>
+                <span class="ap-shell__breadcrumb-current">Recommendations</span>
+            </div>
+        </header>
+        <main id="ap-main" class="ap-canvas">
+            <section class="ap-recs-page">
+                <span class="ap-approvals__eyebrow">What should we fix</span>
+                <h1 class="ap-approvals__title">Recommendations</h1>
+                <p class="ap-approvals__lead">Each rec carries its evidence, confidence, and the tool it would use. Nothing applies without your click, and every action is undoable for 10 seconds.</p>
+
+                {% if show_drafts %}
+                <div class="ap-recs-tabs" role="tablist">
+                    <button type="button" class="ap-recs-tab ap-recs-tab--active" data-tab="live">Live ({{ live_recs|length }})</button>
+                    <button type="button" class="ap-recs-tab" data-tab="drafts">Drafts ({{ draft_recs|length }})</button>
+                </div>
+                {% endif %}
+
+                <div class="ap-recs-list" data-tab="live">
+                    {% for rec in live_recs %}
+                    <article class="ap-rec-full">
+                        {% if rec.goal %}<span class="ap-goal-chip">GOAL: {{ rec.goal }}</span>{% endif %}
+                        <h3 class="ap-rec__headline">{{ rec.headline }}</h3>
+                        <p class="ap-rec__reason">{{ rec.reason }}</p>
+                        <dl class="ap-rec-full__meta">
+                            <div><dt>Tool</dt><dd>{{ rec.proposed_tool }}</dd></div>
+                            <div><dt>Confidence</dt><dd>{{ rec.confidence }}/10</dd></div>
+                            <div><dt>Reversibility</dt><dd>{{ rec.reversibility }}</dd></div>
+                            <div><dt>Impact</dt><dd>{{ rec.impact.estimate }} {{ rec.impact.unit }}</dd></div>
+                        </dl>
+                        {% if rec.evidence %}
+                        <details class="ap-rec-full__evidence">
+                            <summary>Evidence</summary>
+                            <ul>
+                                {% for e in rec.evidence %}
+                                <li>{{ e.source }} · {{ e.datapoint }}: <strong>{{ e.value }}</strong>{% if e.observed_at %} ({{ e.observed_at }}){% endif %}</li>
+                                {% endfor %}
+                            </ul>
+                        </details>
+                        {% endif %}
+                    </article>
+                    {% else %}
+                    <div class="ap-rec-empty">
+                        <p class="ap-rec-empty__title">Nothing to recommend right now.</p>
+                        <p class="ap-rec-empty__body">Your roles are running within expected bounds. Fresh recs queue here the moment signals change.</p>
+                    </div>
+                    {% endfor %}
+                </div>
+
+                {% if show_drafts %}
+                <div class="ap-recs-list" data-tab="drafts" hidden>
+                    {% for rec in draft_recs %}
+                    <article class="ap-rec-full ap-rec-full--draft">
+                        <span class="ap-rec-full__draft-label">DRAFT &middot; {{ rec.draft_reason or 'blocked by guardrail' }}</span>
+                        <h3 class="ap-rec__headline">{{ rec.headline }}</h3>
+                        <p class="ap-rec__reason">{{ rec.reason }}</p>
+                    </article>
+                    {% else %}
+                    <p class="ap-settings__hint">No drafts waiting. That means everything Opus drafted passed the guardrail.</p>
+                    {% endfor %}
+                </div>
+                {% endif %}
+            </section>
+        </main>
+    </div>
+</div>
+<div class="ap-toast-stack" aria-live="polite" aria-atomic="true"></div>
+<script src="/static/undo.js?v=20260422d" defer></script>
+<script src="/static/shell.js?v=20260422d" defer></script>
+<script src="/static/recommendations.js?v=20260422d" defer></script>
+</body>
+</html>

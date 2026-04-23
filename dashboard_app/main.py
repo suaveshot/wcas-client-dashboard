@@ -18,12 +18,18 @@ from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .api import ask as ask_api
+from .api import ask_global as ask_global_api
 from .api import attention as attention_api
 from .api import auth as auth_api
 from .api import brand as brand_api
+from .api import goals as goals_api
 from .api import heartbeat as heartbeat_api
+from .api import outgoing as outgoing_api
 from .api import pipelines as pipelines_api
-from .services import errors, home_context, role_detail, tenant_ctx
+from .api import receipts as receipts_api
+from .api import settings as settings_api
+from .api import tenant as tenant_api
+from .services import activity_feed, errors, goals as goals_svc, home_context, outgoing_queue, role_detail, security_headers, seeded_recs, telemetry, tenant_ctx, tenant_prefs
 from .services.tenant_ctx import current_session
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -35,13 +41,17 @@ TEMPLATES_DIR = APP_DIR / "templates"
 app = FastAPI(
     title="WCAS Client Dashboard",
     description="Agency-level client activation + live automation telemetry.",
-    version="0.2.0",
+    version="0.3.0",
 )
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 auth_api.attach_templates(templates)
+
+# Security headers middleware. Registered first so it wraps the outer
+# response - FastAPI evaluates middleware stack in reverse registration order.
+app.middleware("http")(security_headers.security_headers_middleware)
 
 # Session middleware runs on every request and attaches request.state.session.
 app.middleware("http")(tenant_ctx.resolve_session_middleware)
@@ -51,7 +61,13 @@ app.include_router(pipelines_api.router)
 app.include_router(brand_api.router)
 app.include_router(heartbeat_api.router)
 app.include_router(ask_api.router)
+app.include_router(ask_global_api.router)
 app.include_router(attention_api.router)
+app.include_router(goals_api.router)
+app.include_router(outgoing_api.router)
+app.include_router(receipts_api.router)
+app.include_router(settings_api.router)
+app.include_router(tenant_api.router)
 
 
 # --- Exception handlers ------------------------------------------------------
@@ -202,37 +218,162 @@ async def role_detail_page(request: Request, role_slug: str):
 
 @app.get("/activity", response_class=HTMLResponse)
 async def activity_page(request: Request):
-    return _sidebar_stub(
+    sess = current_session(request)
+    preview = os.getenv("PREVIEW_MODE", "false").lower() == "true"
+    if sess is None and not preview:
+        return RedirectResponse(url="/auth/login", status_code=303)
+    tenant_id = sess["tid"] if sess else "americal_patrol"
+    feed = activity_feed.build(tenant_id, max_rows=80)
+    return templates.TemplateResponse(
         request,
-        "Activity",
-        "The full transparency feed with 10-second undo on every automated action ships Day 3. The six most recent events already render at the bottom of your home screen.",
+        "activity.html",
+        {
+            "tenant_id": tenant_id,
+            "tenant_name": home_context._display_from_slug(tenant_id),
+            "feed": feed,
+        },
     )
 
 
 @app.get("/recommendations", response_class=HTMLResponse)
 async def recommendations_page(request: Request):
-    return _sidebar_stub(
+    sess = current_session(request)
+    preview = os.getenv("PREVIEW_MODE", "false").lower() == "true"
+    if sess is None and not preview:
+        return RedirectResponse(url="/auth/login", status_code=303)
+    tenant_id = sess["tid"] if sess else "americal_patrol"
+    is_admin = bool(sess and sess.get("rl") == "admin")
+
+    all_recs = seeded_recs.build_with_drafts(tenant_id, limit=12)
+    live = [r for r in all_recs if not r.get("draft")]
+    drafts = [r for r in all_recs if r.get("draft")] if is_admin else []
+
+    return templates.TemplateResponse(
         request,
-        "Recommendations",
-        "Goal-anchored recommendations open Day 4, after a full week of telemetry. Each suggestion will come with the evidence, impact math, and an Apply button with a 10-second undo chip.",
+        "recommendations.html",
+        {
+            "tenant_id": tenant_id,
+            "tenant_name": home_context._display_from_slug(tenant_id),
+            "live_recs": live,
+            "draft_recs": drafts,
+            "show_drafts": is_admin,
+        },
     )
 
 
 @app.get("/settings", response_class=HTMLResponse)
 async def settings_page(request: Request):
-    return _sidebar_stub(
+    import json as _json
+    sess = current_session(request)
+    preview = os.getenv("PREVIEW_MODE", "false").lower() == "true"
+    if sess is None and not preview:
+        return RedirectResponse(url="/auth/login", status_code=303)
+    tenant_id = sess["tid"] if sess else "americal_patrol"
+
+    prefs = tenant_prefs.read(tenant_id)
+    snaps = telemetry.pipelines_for(tenant_id)
+    pipelines = []
+    for snap in snaps:
+        pid = snap.get("pipeline_id", "")
+        if not pid:
+            continue
+        pipelines.append({
+            "pipeline_id": pid,
+            "display": home_context._role_display(pid),
+            "require_approval": bool(prefs.get("require_approval", {}).get(pid, False)),
+        })
+
+    return templates.TemplateResponse(
         request,
-        "Settings",
-        "Timezone, tone, do-not-disturb windows, goal editing, brand overrides, and notification preferences are all on the Day 3 agenda.",
+        "settings.html",
+        {
+            "tenant_id": tenant_id,
+            "tenant_name": home_context._display_from_slug(tenant_id),
+            "owner_name": (sess.get("em") or "").split("@")[0] if sess else "demo",
+            "owner_email": sess.get("em", "") if sess else "demo@claudejudge.com",
+            "prefs": prefs,
+            "prefs_json": _json.dumps(prefs),
+            "pipelines": pipelines,
+        },
     )
 
 
 @app.get("/goals", response_class=HTMLResponse)
 async def goals_page(request: Request):
-    return _sidebar_stub(
+    sess = current_session(request)
+    preview = os.getenv("PREVIEW_MODE", "false").lower() == "true"
+    if sess is None and not preview:
+        return RedirectResponse(url="/auth/login", status_code=303)
+    tenant_id = sess["tid"] if sess else "americal_patrol"
+
+    data = goals_svc.read(tenant_id)
+    goals_list = []
+    for g in (data.get("goals") or []):
+        target = float(g.get("target") or 0)
+        current = float(g.get("current") or 0)
+        pct = 0 if target <= 0 else max(0, min(100, int((current / target) * 100)))
+        g2 = dict(g)
+        g2["percent"] = pct
+        goals_list.append(g2)
+
+    return templates.TemplateResponse(
         request,
-        "Goals",
-        "Set one to three clear goals and every recommendation will anchor to them. Full goal-setting surface opens Day 3 alongside activation; for now, reply to your welcome email with the outcomes you care about this quarter and Sam will pin them.",
+        "goals.html",
+        {
+            "tenant_id": tenant_id,
+            "tenant_name": home_context._display_from_slug(tenant_id),
+            "goals_list": goals_list,
+            "can_add": len(goals_list) < goals_svc.MAX_GOALS,
+        },
+    )
+
+
+@app.get("/approvals", response_class=HTMLResponse)
+async def approvals_page(request: Request):
+    """Approvals inbox: pending drafts for pipelines with `Approve before send` on."""
+    from datetime import datetime, timezone
+
+    sess = current_session(request)
+    preview = os.getenv("PREVIEW_MODE", "false").lower() == "true"
+    if sess is None and not preview:
+        return RedirectResponse(url="/auth/login", status_code=303)
+
+    tenant_id = sess["tid"] if sess else "americal_patrol"
+    drafts = outgoing_queue.list_pending(tenant_id)
+
+    now = datetime.now(timezone.utc)
+    enriched = []
+    for d in drafts:
+        try:
+            created = datetime.fromisoformat((d.get("created_at") or "").replace("Z", "+00:00"))
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            hours = (now - created).total_seconds() / 3600
+        except (ValueError, TypeError):
+            hours = 0.0
+        urgency = "green" if hours < 2 else "amber" if hours < 12 else "red"
+        if hours < 1:
+            age_human = f"{int(hours * 60)} min ago"
+        elif hours < 24:
+            age_human = f"{int(hours)}h ago"
+        else:
+            days = int(hours // 24)
+            age_human = f"{days} day{'s' if days != 1 else ''} ago"
+        d2 = dict(d)
+        d2["urgency"] = urgency
+        d2["age_human"] = age_human
+        d2["pipeline_display"] = home_context._role_display(d.get("pipeline_id", ""))
+        enriched.append(d2)
+
+    return templates.TemplateResponse(
+        request,
+        "approvals.html",
+        {
+            "tenant_id": tenant_id,
+            "tenant_name": home_context._display_from_slug(tenant_id),
+            "drafts": enriched,
+            "pending_count": len(enriched),
+        },
     )
 
 
@@ -259,9 +400,15 @@ def _demo_home_context() -> dict:
         "refresh_ago": "2 min ago",
         "next_refresh": "8:00 AM local",
         "pinned_roles": [
-            {"slug": "reviews", "name": "Reviews", "active": True, "auto": True},
-            {"slug": "morning-reports", "name": "Morning Reports", "active": True, "auto": True},
-            {"slug": "seo", "name": "SEO", "active": False, "auto": True},
+            {"slug": "reviews", "name": "Reviews", "active": True, "auto": True, "state": "active", "pulse": True},
+            {"slug": "morning-reports", "name": "Morning Reports", "active": True, "auto": True, "state": "active", "pulse": False},
+            {"slug": "sales-pipeline", "name": "Sales Pipeline", "active": True, "auto": True, "state": "active", "pulse": False},
+        ],
+        "rail_health": {"total": 14, "running": 11, "attention": 2, "error": 1, "paused": 0},
+        "recent_asks": [
+            {"question": "Why is Ads pacing 18% under goal?", "cost_usd": 0.0008, "ts": "2026-04-22T14:03:00+00:00"},
+            {"question": "Which role saved me the most time this week?", "cost_usd": 0.0007, "ts": "2026-04-22T12:14:00+00:00"},
+            {"question": "Is there anything in the sales pipeline going stale?", "cost_usd": 0.0009, "ts": "2026-04-21T17:45:00+00:00"},
         ],
         "attention": {
             "kind": "behind",
