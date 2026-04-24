@@ -13,16 +13,19 @@ else that renders the ring grid.
 from __future__ import annotations
 
 
+# `logo` keys map to vendor-branded inline SVGs rendered in the ring center.
+# The `templates/activate.html` LOGOS dict is the source of truth for the
+# actual SVG markup; these keys just pick which logo to show.
 ACTIVATION_ROSTER: list[dict[str, str]] = [
-    {"slug": "gbp",            "name": "Google Business", "icon": "store"},
-    {"slug": "seo",            "name": "SEO",             "icon": "search"},
-    {"slug": "reviews",        "name": "Reviews",         "icon": "star"},
-    {"slug": "sales_pipeline", "name": "Sales Pipeline",  "icon": "funnel"},
-    {"slug": "blog",           "name": "Blog Posts",      "icon": "pen"},
-    {"slug": "social",         "name": "Social Posts",    "icon": "share"},
-    {"slug": "ads",            "name": "Ads",             "icon": "megaphone"},
-    {"slug": "chat_widget",    "name": "Chat Widget",     "icon": "message"},
-    {"slug": "qbr",            "name": "QBR Generator",   "icon": "file-check"},
+    {"slug": "gbp",            "name": "Google Business", "logo": "google"},
+    {"slug": "seo",            "name": "SEO",             "logo": "google_search_console"},
+    {"slug": "reviews",        "name": "Reviews",         "logo": "google"},
+    {"slug": "sales_pipeline", "name": "Sales Pipeline",  "logo": "ghl"},
+    {"slug": "blog",           "name": "Blog Posts",      "logo": "wordpress"},
+    {"slug": "social",         "name": "Social Posts",    "logo": "meta"},
+    {"slug": "ads",            "name": "Ads",             "logo": "google_ads"},
+    {"slug": "chat_widget",    "name": "Chat Widget",     "logo": "wcas"},
+    {"slug": "qbr",            "name": "QBR Generator",   "logo": "wcas"},
 ]
 
 

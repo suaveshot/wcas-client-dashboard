@@ -11,7 +11,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="/static/styles.css?v=20260424c">
+    <link rel="stylesheet" href="/static/styles.css?v=20260424d">
 </head>
 <body class="ap-activate-body">
 <a href="#ap-activate-main" class="ap-sr">Skip to main content</a>
@@ -146,19 +146,25 @@
     </section>
 
     {# ------------- RIGHT: ring grid ------------- #}
-    {# Icon catalog: tiny Lucide-style stroke SVGs, one per role. Rendered
-       inside the ring so the grid reads at a glance instead of looking like
-       nine identical circles. #}
-    {% set icons = {
-        "store":      "M3 7l2-4h14l2 4M3 7v13a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7M3 7h18",
-        "search":     "M21 21l-4.35-4.35M17 11a6 6 0 1 1-12 0 6 6 0 0 1 12 0z",
-        "star":       "M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z",
-        "funnel":     "M3 4h18l-7 8v6l-4 2v-8z",
-        "pen":        "M12 19l7-7 3 3-7 7h-3v-3zM18 13l-6-6 2-2 6 6z",
-        "share":      "M4 12a4 4 0 1 0 0-4 4 4 0 0 0 0 4zM20 4a4 4 0 1 0 0 4 4 4 0 0 0 0-4zM20 20a4 4 0 1 0-4-4 4 4 0 0 0 4 4zM8 12l8-5M8 12l8 5",
-        "megaphone":  "M3 11l14-7v16l-14-7v-2zM10 18a3 3 0 1 1-6 0",
-        "message":    "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z",
-        "file-check": "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2l6 6h-6zM9 15l2 2 4-4"
+    {# Vendor logo catalog: inline SVG strings keyed by `logo` on each roster
+       entry. Google G is the canonical multi-color Material-style rendering;
+       Search Console + Ads use their actual colored marks; GHL / Meta /
+       WordPress use brand-accurate approximations. WCAS spark is the brand
+       glyph for in-house pipelines. #}
+    {% set LOGOS = {
+      "google": '<svg viewBox="0 0 24 24" width="36" height="36" aria-hidden="true"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>',
+
+      "google_search_console": '<svg viewBox="0 0 24 24" width="36" height="36" aria-hidden="true"><circle cx="10" cy="10" r="6.5" fill="none" stroke="#4285F4" stroke-width="2"/><rect x="7.5" y="10.5" width="1.6" height="2.5" fill="#34A853"/><rect x="9.8" y="7.5" width="1.6" height="5.5" fill="#FBBC05"/><rect x="12.1" y="9" width="1.6" height="4" fill="#EA4335"/><line x1="14.6" y1="14.6" x2="20" y2="20" stroke="#4285F4" stroke-width="2.2" stroke-linecap="round"/></svg>',
+
+      "google_ads": '<svg viewBox="0 0 24 24" width="36" height="36" aria-hidden="true"><path fill="#FBBC05" d="M3.7 15.3l7.5-13c.6-1 1.9-1.4 3-.8 1 .6 1.4 1.9.8 3l-7.5 13c-.6 1-1.9 1.4-3 .8-1-.6-1.4-1.9-.8-3z"/><path fill="#4285F4" d="M9.8 15.3l7.5-13c.6-1 1.9-1.4 3-.8 1 .6 1.4 1.9.8 3l-7.5 13c-.6 1-1.9 1.4-3 .8-1-.6-1.4-1.9-.8-3z"/><circle cx="6" cy="19.2" r="2.6" fill="#34A853"/></svg>',
+
+      "ghl": '<svg viewBox="0 0 24 24" width="36" height="36" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="4.5" fill="#ffe066"/><path d="M6 18V6h2.4v4.5h4V6h2.4v12h-2.4v-5.1h-4V18z" fill="#101820"/><circle cx="18" cy="9" r="1.2" fill="#101820"/></svg>',
+
+      "meta": '<svg viewBox="0 0 24 24" width="36" height="36" aria-hidden="true"><path fill="#0081FB" d="M7.1 5c-2.2 0-3.8 1.7-3.8 4.2 0 2.8 1.6 6.7 4.3 6.7 1.6 0 2.8-.8 4.6-3.6-.8-1.2-1.6-2.4-2.3-3.4-1.4-2-2-3.9-2.8-3.9zm0-2c2.2 0 3.2 1.9 5 4.6 1.8-2.6 3.1-4.6 5.4-4.6 3 0 5.2 2.8 5.2 6.9 0 4.9-3.3 9.1-6.2 9.1-2 0-3.4-1.1-5.3-4-1.7 2.6-2.9 4-4.9 4-2.8 0-5.3-3.4-5.3-8.4C1 6.5 3.4 3 7.1 3zm9.8 2c-1.1 0-2 1-3.5 3.6.9 1.3 1.8 2.8 2.7 4.2 1.3 2 1.9 2.5 2.7 2.5 1.2 0 2.2-1.9 2.2-4.9 0-3-1.4-5.4-4.1-5.4z"/></svg>',
+
+      "wordpress": '<svg viewBox="0 0 24 24" width="36" height="36" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="#21759B"/><circle cx="12" cy="12" r="10" fill="none" stroke="#21759B" stroke-width="0.5"/><path d="M3.4 12a8.6 8.6 0 0 0 4.85 7.74L3.7 7.55A8.58 8.58 0 0 0 3.4 12zm14.4-.43c0-1.06-.38-1.8-.71-2.37-.44-.71-.85-1.3-.85-2 0-.78.6-1.51 1.43-1.51h.1A8.58 8.58 0 0 0 5.5 6.16h.54c.89 0 2.26-.1 2.26-.1.45-.03.51.65.05.7 0 0-.46.06-.97.08l3.08 9.16 1.85-5.55-1.32-3.61c-.45-.03-.89-.08-.89-.08-.45-.03-.4-.74.05-.71 0 0 1.4.1 2.24.1.89 0 2.26-.1 2.26-.1.46-.03.51.65.06.7 0 0-.46.06-.98.08l3.05 9.07zm-5.64 1.17l-2.53 7.34a8.6 8.6 0 0 0 5.26-.14.76.76 0 0 1-.07-.13zm7.49-4.93a6.8 6.8 0 0 1 .06.87c0 .85-.16 1.82-.64 3.03l-2.58 7.45A8.6 8.6 0 0 0 19.65 7.8z" fill="#fff"/></svg>',
+
+      "wcas": '<svg viewBox="0 0 24 24" width="36" height="36" aria-hidden="true"><path d="M12 2l2 8 8 2-8 2-2 8-2-8-8-2 8-2z" fill="#E97B2E"/><path d="M12 7l1 4 4 1-4 1-1 4-1-4-4-1 4-1z" fill="#fff" opacity="0.35"/></svg>'
     } %}
 
     <aside class="ap-activate-rings" aria-label="Role readiness grid" data-activate-rings
@@ -191,31 +197,29 @@
             {% set step = role.step or 'pending' %}
             {% set completed = {'credentials': 1, 'config': 2, 'connected': 3, 'first_run': 4}.get(step, 0) %}
             <div class="ap-activate-ring" data-activate-ring data-role-slug="{{ role.slug }}" data-role-step="{{ step }}">
-                <svg viewBox="0 0 120 120" width="104" height="104" aria-hidden="true" class="ap-activate-ring__svg">
-                    {# Four sub-arcs, starting from 12 o'clock, clockwise. Arc fill states
-                       are driven by the data-role-step attribute + CSS. #}
-                    <g transform="rotate(-90 60 60)">
-                        <circle class="ap-activate-ring__arc ap-activate-ring__arc--1" cx="60" cy="60" r="52"
-                                fill="none" stroke-width="8" stroke-linecap="butt"
-                                stroke-dasharray="77.7 249" stroke-dashoffset="0"></circle>
-                        <circle class="ap-activate-ring__arc ap-activate-ring__arc--2" cx="60" cy="60" r="52"
-                                fill="none" stroke-width="8" stroke-linecap="butt"
-                                stroke-dasharray="77.7 249" stroke-dashoffset="-81.7"></circle>
-                        <circle class="ap-activate-ring__arc ap-activate-ring__arc--3" cx="60" cy="60" r="52"
-                                fill="none" stroke-width="8" stroke-linecap="butt"
-                                stroke-dasharray="77.7 249" stroke-dashoffset="-163.4"></circle>
-                        <circle class="ap-activate-ring__arc ap-activate-ring__arc--4" cx="60" cy="60" r="52"
-                                fill="none" stroke-width="8" stroke-linecap="butt"
-                                stroke-dasharray="77.7 249" stroke-dashoffset="-245.1"></circle>
-                    </g>
-                    {# Role icon in the center of the ring. Single-color stroke,
-                       inherits from .ap-activate-ring__icon color. #}
-                    <g class="ap-activate-ring__icon" transform="translate(36 36) scale(2)">
-                        <path d="{{ icons.get(role.icon, icons['store']) }}"
-                              fill="none" stroke="currentColor" stroke-width="1.6"
-                              stroke-linecap="round" stroke-linejoin="round"></path>
-                    </g>
-                </svg>
+                <div class="ap-activate-ring__visual">
+                    <svg viewBox="0 0 120 120" width="104" height="104" aria-hidden="true" class="ap-activate-ring__svg">
+                        {# Four sub-arcs, starting from 12 o'clock, clockwise. Arc fill
+                           states are driven by the data-role-step attribute + CSS. #}
+                        <g transform="rotate(-90 60 60)">
+                            <circle class="ap-activate-ring__arc ap-activate-ring__arc--1" cx="60" cy="60" r="52"
+                                    fill="none" stroke-width="8" stroke-linecap="butt"
+                                    stroke-dasharray="77.7 249" stroke-dashoffset="0"></circle>
+                            <circle class="ap-activate-ring__arc ap-activate-ring__arc--2" cx="60" cy="60" r="52"
+                                    fill="none" stroke-width="8" stroke-linecap="butt"
+                                    stroke-dasharray="77.7 249" stroke-dashoffset="-81.7"></circle>
+                            <circle class="ap-activate-ring__arc ap-activate-ring__arc--3" cx="60" cy="60" r="52"
+                                    fill="none" stroke-width="8" stroke-linecap="butt"
+                                    stroke-dasharray="77.7 249" stroke-dashoffset="-163.4"></circle>
+                            <circle class="ap-activate-ring__arc ap-activate-ring__arc--4" cx="60" cy="60" r="52"
+                                    fill="none" stroke-width="8" stroke-linecap="butt"
+                                    stroke-dasharray="77.7 249" stroke-dashoffset="-245.1"></circle>
+                        </g>
+                    </svg>
+                    <span class="ap-activate-ring__logo" aria-hidden="true">
+                        {{ LOGOS.get(role.logo, LOGOS["wcas"])|safe }}
+                    </span>
+                </div>
                 <div class="ap-activate-ring__label">{{ role.name }}</div>
                 <div class="ap-activate-ring__step" data-activate-ring-step>
                     {% if role.step == "first_run" %}Running &middot; 4 of 4
@@ -230,6 +234,6 @@
     </aside>
 </main>
 
-<script defer src="/static/activate.js?v=20260424c"></script>
+<script defer src="/static/activate.js?v=20260424d"></script>
 </body>
 </html>

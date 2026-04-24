@@ -3747,17 +3747,40 @@ body.ap-receipts-drawer-open { overflow: hidden; }
   filter: drop-shadow(0 0 8px rgba(46, 143, 168, 0.35));
 }
 
-/* Role icon sits in the center of the ring. Inherits color from the ring's
-   data-role-step state - muted when pending, ink-dark when any progress. */
-.ap-activate-ring__icon {
-  color: var(--ink-faint);
-  transition: color var(--t-slow) var(--ease);
+/* Ring visual: positioned wrapper so the vendor logo can sit absolute-centered
+   on top of the SVG ring arcs. */
+.ap-activate-ring__visual {
+  position: relative;
+  display: inline-block;
+  line-height: 0;
 }
-.ap-activate-ring[data-role-step="credentials"] .ap-activate-ring__icon,
-.ap-activate-ring[data-role-step="config"]      .ap-activate-ring__icon,
-.ap-activate-ring[data-role-step="connected"]   .ap-activate-ring__icon,
-.ap-activate-ring[data-role-step="first_run"]   .ap-activate-ring__icon {
-  color: var(--ink);
+.ap-activate-ring__logo {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--bg);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  transition: transform var(--t-fast) var(--ease), filter var(--t-slow) var(--ease);
+}
+.ap-activate-ring__logo svg {
+  width: 28px;
+  height: 28px;
+  display: block;
+}
+/* Pending rings desaturate the logo slightly so the ring grid communicates
+   "not yet set up" without hiding the brand entirely. */
+.ap-activate-ring[data-role-step="pending"] .ap-activate-ring__logo {
+  filter: saturate(0.35) opacity(0.7);
+}
+.ap-activate-ring[data-role-step="first_run"] .ap-activate-ring__logo {
+  transform: translate(-50%, -50%) scale(1.05);
 }
 
 .ap-activate-ring__label {
