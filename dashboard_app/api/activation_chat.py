@@ -16,14 +16,25 @@ to send again.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from ..agents import activation_agent
-from ..services import activation_state, credentials, rate_limit, roster, validation_probe
+from ..services import (
+    activation_state,
+    audit_log,
+    credentials,
+    rate_limit,
+    roster,
+    screenshot_vision,
+    validation_probe,
+)
 from ..services.tenant_ctx import require_tenant
+
+log = logging.getLogger("dashboard.activation_chat")
 
 
 # 20 messages per 5 minutes per tenant. Belt-and-suspenders alongside the
@@ -40,6 +51,34 @@ router = APIRouter(tags=["activation_chat"])
 class ChatIn(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
     reset: bool = False
+    # Server-generated filenames from POST /api/activation/screenshot.
+    # Max 3 attachments per turn - plenty for a 4-step setup flow.
+    screenshots: list[str] = Field(default_factory=list, max_length=3)
+
+
+def _prepend_screenshot_context(tenant_id: str, message: str, filenames: list[str]) -> str:
+    """Describe each screenshot via Opus Vision + inline the descriptions so
+    the Managed Agent (text-only loop) can reason about what's on screen."""
+    if not filenames:
+        return message
+    described: list[str] = []
+    for name in filenames:
+        try:
+            described.append(screenshot_vision.describe_path(tenant_id, name))
+        except ValueError as exc:
+            log.warning("screenshot resolve failed tenant=%s name=%s: %s", tenant_id, name, exc)
+            described.append(f"[screenshot {name}: could not read ({exc})]")
+    header_lines = [
+        "[Attached screenshot context: the owner uploaded the following "
+        "image(s). Use these descriptions to give accurate next-step guidance "
+        "grounded in the actual current UI, not training-data memory.]",
+    ]
+    for i, desc in enumerate(described, start=1):
+        header_lines.append(f"Screenshot {i} of {len(described)}:")
+        header_lines.append(desc.strip())
+        header_lines.append("")
+    header_lines.append("Owner's message follows:")
+    return "\n".join(header_lines) + "\n\n" + message
 
 
 @router.post("/api/activation/chat")
@@ -57,7 +96,17 @@ def activation_chat(
     if body.reset:
         activation_agent.reset_session(tenant_id)
 
-    turn = activation_agent.run_turn(tenant_id, body.message.strip())
+    message = body.message.strip()
+    if body.screenshots:
+        audit_log.record(
+            tenant_id=tenant_id,
+            event="chat_with_screenshots",
+            ok=True,
+            count=len(body.screenshots),
+        )
+        message = _prepend_screenshot_context(tenant_id, message, body.screenshots)
+
+    turn = activation_agent.run_turn(tenant_id, message)
 
     # Re-read tenant state so the UI reflects any ring advances the turn
     # triggered (via activate_pipeline tool calls inside run_turn).

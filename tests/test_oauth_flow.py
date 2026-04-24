@@ -49,17 +49,27 @@ def _client() -> TestClient:
 
 def test_start_unauthenticated_is_401_or_redirected_to_login():
     client = _client()
-    resp = client.get("/auth/oauth/google/start")
+    resp = client.get("/auth/oauth/google/start?consent=1")
     # Global 401 handler rewrites to /auth/login 303; either way no Google URL.
     assert resp.status_code in (303, 401)
     if resp.status_code == 303:
         assert "accounts.google.com" not in resp.headers.get("location", "")
 
 
-def test_start_redirects_to_google_with_correct_params():
+def test_start_without_consent_redirects_to_scope_preview():
+    """New §0.5 behavior: the /start URL requires ?consent=1. Without it,
+    the owner lands on the plain-English scope-preview screen first."""
     client = _client()
     client.cookies.set("wcas_session", _tenant_cookie())
     resp = client.get("/auth/oauth/google/start")
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/auth/oauth/google/preview"
+
+
+def test_start_redirects_to_google_with_correct_params():
+    client = _client()
+    client.cookies.set("wcas_session", _tenant_cookie())
+    resp = client.get("/auth/oauth/google/start?consent=1")
     assert resp.status_code == 303
     location = resp.headers["location"]
     parsed = urlparse(location)
@@ -87,7 +97,7 @@ def test_start_redirects_to_google_with_correct_params():
 def test_start_sets_oauth_state_cookie():
     client = _client()
     client.cookies.set("wcas_session", _tenant_cookie())
-    resp = client.get("/auth/oauth/google/start")
+    resp = client.get("/auth/oauth/google/start?consent=1")
     assert resp.status_code == 303
     cookie_blob = resp.cookies.get("wcas_oauth_state")
     assert cookie_blob
@@ -104,7 +114,7 @@ def test_start_returns_503_when_google_oauth_unconfigured(monkeypatch):
     monkeypatch.delenv("GOOGLE_OAUTH_CLIENT_ID", raising=False)
     client = _client()
     client.cookies.set("wcas_session", _tenant_cookie())
-    resp = client.get("/auth/oauth/google/start")
+    resp = client.get("/auth/oauth/google/start?consent=1")
     assert resp.status_code == 503
     assert "oauth not configured" in resp.text.lower()
 
@@ -116,7 +126,7 @@ def _prime_oauth_session(tenant: str = "acme") -> tuple[TestClient, str, str]:
     """Walk through /start so the test has a real state cookie + URL state."""
     client = _client()
     client.cookies.set("wcas_session", _tenant_cookie(tenant))
-    resp = client.get("/auth/oauth/google/start")
+    resp = client.get("/auth/oauth/google/start?consent=1")
     assert resp.status_code == 303
     url_state = parse_qs(urlparse(resp.headers["location"]).query)["state"][0]
     cookie_blob = resp.cookies.get("wcas_oauth_state")

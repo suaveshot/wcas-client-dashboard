@@ -1,13 +1,16 @@
 """Per-tenant activation roster (the role slugs the ring grid renders).
 
-Hackathon demo roster = the 9 generic WCAS pipelines every client gets,
-rendered as a clean 3x3 grid. AP-specific vertical pipelines (patrol,
-harbor_lights, guard_compliance, weekly_update, watchdog) are deliberately
-omitted from the activation surface since they're security-only and would
-mislead a generic judge. Post-hackathon we'll derive per tenant from a
-`clients.json` template, but for the Apr 26 submission one list is
-authoritative across `main.py`, `api/activation_chat.py`, and anything
-else that renders the ring grid.
+Hackathon demo roster (2026-04-24 pivot) = the 7 tenant-generic WCAS
+automations that onboard to any client. Dropped from the earlier 9-slot
+roster: `sales_pipeline` (AP-specific GHL follow-up logic), `ads` (no
+per-client spend baseline yet + `feedback_ap_no_roi_calculator.md`), and
+`qbr` (post-activation artifact, not an onboarding primitive). They
+return to the roster once a tenant-generic version exists.
+
+The architecture thesis: every one of these reads from the per-tenant KB
+at runtime. Filling the KB during activation is the generalization
+mechanism; each automation becomes client-specific the moment its voice,
+services, policies, and pricing sections are filled.
 """
 
 from __future__ import annotations
@@ -17,15 +20,13 @@ from __future__ import annotations
 # The `templates/activate.html` LOGOS dict is the source of truth for the
 # actual SVG markup; these keys just pick which logo to show.
 ACTIVATION_ROSTER: list[dict[str, str]] = [
-    {"slug": "gbp",            "name": "Google Business", "logo": "google"},
-    {"slug": "seo",            "name": "SEO",             "logo": "google_search_console"},
-    {"slug": "reviews",        "name": "Reviews",         "logo": "google"},
-    {"slug": "sales_pipeline", "name": "Sales Pipeline",  "logo": "ghl"},
-    {"slug": "blog",           "name": "Blog Posts",      "logo": "wordpress"},
-    {"slug": "social",         "name": "Social Posts",    "logo": "meta"},
-    {"slug": "ads",            "name": "Ads",             "logo": "google_ads"},
-    {"slug": "chat_widget",    "name": "Chat Widget",     "logo": "wcas"},
-    {"slug": "qbr",            "name": "QBR Generator",   "logo": "wcas"},
+    {"slug": "gbp",             "name": "Google Business", "logo": "google"},
+    {"slug": "seo",             "name": "SEO Reports",     "logo": "google_search_console"},
+    {"slug": "reviews",         "name": "Review Engine",   "logo": "google"},
+    {"slug": "email_assistant", "name": "Email Assistant", "logo": "wcas"},
+    {"slug": "chat_widget",     "name": "Chat Widget",     "logo": "wcas"},
+    {"slug": "blog",            "name": "Blog Automation", "logo": "wcas"},
+    {"slug": "social",          "name": "Social Manager",  "logo": "meta"},
 ]
 
 

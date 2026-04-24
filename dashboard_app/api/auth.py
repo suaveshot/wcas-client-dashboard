@@ -21,6 +21,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from ..services import (
+    audit_log,
     clients_repo,
     email_sender,
     rate_limit,
@@ -101,24 +102,44 @@ async def request_magic_link(request: Request, email: str = Form(...)) -> HTMLRe
         log.error("Airtable unavailable on /auth/request: %s", exc)
         return _tmpl().TemplateResponse(request, "auth/check_inbox.html", {"email": email_clean})
 
+    # Gate: require both (a) an active client row AND (b) Sam has flipped
+    # the Onboarding Approved field. Unapproved + unknown + rate-limited
+    # all fall through to the same neutral "check your inbox" page so an
+    # attacker can't enumerate which emails are in the CRM. Approval
+    # denials are logged server-side for Sam's audit.
     if record is not None and clients_repo.is_active(record):
-        token = tokens.generate_token()
-        try:
-            clients_repo.stash_magic_link(
-                record["id"], tokens.hash_token(token), tokens.expiry_timestamp()
+        if not clients_repo.is_onboarding_approved(record):
+            tenant_for_log = clients_repo.extract_tenant_id(record) or "unknown"
+            log.info(
+                "magic-link denied (not approved) tenant=%s email=%s",
+                tenant_for_log,
+                scrub(email_clean),
             )
-            html_body, text_body = _render_magic_link_email(
-                request, token, clients_repo.extract_tenant_id(record)
+            audit_log.record(
+                tenant_id=tenant_for_log,
+                event="magic_link_denied_unapproved",
+                ok=False,
+                actor_email=email_clean,
+                reason="Onboarding Approved = false",
             )
-            email_sender.send_html(
-                to_email=email_clean,
-                subject="Your dashboard sign-in link",
-                html_body=html_body,
-                text_body=text_body,
-            )
-        except (email_sender.EmailSendError, RuntimeError):
-            log.exception("magic link send failed for %s", scrub(email_clean))
-            # Still show check-inbox page; don't leak failure.
+        else:
+            token = tokens.generate_token()
+            try:
+                clients_repo.stash_magic_link(
+                    record["id"], tokens.hash_token(token), tokens.expiry_timestamp()
+                )
+                html_body, text_body = _render_magic_link_email(
+                    request, token, clients_repo.extract_tenant_id(record)
+                )
+                email_sender.send_html(
+                    to_email=email_clean,
+                    subject="Your dashboard sign-in link",
+                    html_body=html_body,
+                    text_body=text_body,
+                )
+            except (email_sender.EmailSendError, RuntimeError):
+                log.exception("magic link send failed for %s", scrub(email_clean))
+                # Still show check-inbox page; don't leak failure.
 
     return _tmpl().TemplateResponse(request, "auth/check_inbox.html", {"email": email_clean})
 
@@ -156,6 +177,25 @@ async def verify_magic_link(request: Request, token: str = "") -> RedirectRespon
         return RedirectResponse(url="/auth/login?e=incomplete", status_code=303)
 
     clients_repo.mark_consumed(record["id"])
+
+    # Audit + alert Sam. Both are best-effort; failures log but don't break login.
+    audit_log.record(
+        tenant_id=tenant_id,
+        event="magic_link_verified",
+        ok=True,
+        actor_email=email,
+    )
+    email_sender.alert_sam(
+        tenant_id=tenant_id,
+        event_type="onboarding_started",
+        subject=f"[WCAS] {tenant_id} signed in",
+        body=(
+            f"Client sign-in on the activation wizard.\n\n"
+            f"Tenant:  {tenant_id}\n"
+            f"Email:   {email}\n"
+            f"Role:    {role}\n"
+        ),
+    )
 
     cookie_value = sessions.issue(tenant_id=tenant_id, email=email, role=role)
     # First-time owners land on /activate to run the onboarding chat; returning

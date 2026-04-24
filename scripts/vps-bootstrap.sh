@@ -26,7 +26,7 @@ DOMAIN="dashboard.westcoastautomationsolutions.com"
 REPO="https://github.com/suaveshot/wcas-client-dashboard.git"
 INSTALL_DIR="/opt/wc-solns/dashboard_app"
 TRAEFIK_DIR="/opt/wc-solns/_traefik"
-ACME_EMAIL="salarcon@americalpatrol.com"
+ACME_EMAIL="sam@westcoastautomationsolutions.com"
 
 log() { printf '\n\033[0;36m==>\033[0m %s\n' "$*"; }
 die() { printf '\n\033[0;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }

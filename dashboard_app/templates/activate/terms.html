@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Before we start &middot; WCAS Client Dashboard</title>
+    <meta name="robots" content="noindex">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/styles.css?v=20260424e">
+</head>
+<body>
+<main class="landing" style="max-width: 680px; padding: 48px 24px;">
+    <span class="landing__eyebrow">WestCoast Automation Solutions</span>
+    <h1>One quick check before we start</h1>
+    <p class="landing__lead">
+        Onboarding collects facts about your business and connects to the services you
+        choose. Before we do, take a look at the terms + privacy policy and click below
+        to continue.
+    </p>
+
+    <ul style="margin: 24px 0 32px; line-height: 1.8; padding-left: 20px;">
+        <li>You stay the owner of every account we connect. We never change login or take over ownership.</li>
+        <li>Every email + post that goes out goes out because you approved it, not because the software decided to.</li>
+        <li>Your data comes with you if you leave. Export any time, delete on cancellation.</li>
+    </ul>
+
+    <p style="margin-bottom: 24px;">
+        Full text: <a href="/legal/terms" target="_blank" rel="noopener">Terms of Service</a>
+        &middot; <a href="/legal/privacy" target="_blank" rel="noopener">Privacy Policy</a>
+    </p>
+
+    {% if error %}
+    <p class="landing__error" role="alert" style="color: var(--warn); font-weight: 600; margin-bottom: 16px;">
+        {{ error }}
+    </p>
+    {% endif %}
+
+    <form method="post" action="/api/activation/accept-terms" style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+        <input type="hidden" name="version" value="{{ tos_version }}">
+        <button type="submit"
+                style="padding:14px 28px; background: var(--accent); color:#fff; border:0; border-radius:var(--r-sm); font-family:var(--font-body); font-weight:600; font-size:16px; cursor:pointer;">
+            I agree &middot; continue to onboarding
+        </button>
+    </form>
+
+    <div class="landing__meta" style="margin-top:32px;">
+        <p>Questions? <a href="mailto:sam@westcoastautomationsolutions.com">sam@westcoastautomationsolutions.com</a></p>
+    </div>
+</main>
+</body>
+</html>

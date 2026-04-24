@@ -7,8 +7,9 @@ a refreshable credential, and the dashboard lives in a Docker
 container with no browser to re-auth.
 
 Set in .env:
-    SUPPORT_EMAIL_FROM   = americalpatrol@gmail.com
-    GMAIL_APP_PASSWORD   = 16-char Gmail app password
+    SUPPORT_EMAIL_FROM = americalpatrol@gmail.com
+    GMAIL_APP_PASSWORD = 16-char Gmail app password
+    SUPPORT_EMAIL_TO = sam@westcoastautomationsolutions.com
 
 Templates are Jinja2 HTML + plain-text twins. MIME multipart/alternative
 so clients that strip HTML still get a usable body.
@@ -17,6 +18,8 @@ so clients that strip HTML still get a usable body.
 import logging
 import os
 import smtplib
+import threading
+import time
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
@@ -48,3 +51,72 @@ def send_html(to_email: str, subject: str, html_body: str, text_body: str) -> No
     except (smtplib.SMTPException, OSError) as exc:
         log.exception("email send failed to=%s subject=%r", to_email, subject)
         raise EmailSendError(str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# Sam alerting - per-event-type per-tenant dedupe (5 min window)
+# ---------------------------------------------------------------------------
+
+_SAM_ALERT_WINDOW_SECONDS = 300
+_sam_alert_last_sent: dict[tuple[str, str], float] = {}
+_sam_alert_lock = threading.Lock()
+
+
+def alert_sam(
+    *,
+    tenant_id: str,
+    event_type: str,
+    subject: str,
+    body: str,
+    force: bool = False,
+) -> bool:
+    """Send Sam a short notification email about a tenant activation event.
+
+    Dedupes per (tenant_id, event_type) within a 5-minute window so a runaway
+    tool loop can't pump the inbox. `force=True` skips dedupe (used for tests
+    + the "complete" event which should always get through).
+
+    Returns True when an email was actually sent, False when deduped or when
+    SUPPORT_EMAIL_TO is unset.
+    """
+    recipient = (os.getenv("SUPPORT_EMAIL_TO") or "").strip()
+    if not recipient:
+        return False
+
+    key = (tenant_id, event_type)
+    now = time.monotonic()
+    if not force:
+        with _sam_alert_lock:
+            last = _sam_alert_last_sent.get(key)
+            if last is not None and (now - last) < _SAM_ALERT_WINDOW_SECONDS:
+                return False
+            _sam_alert_last_sent[key] = now
+    else:
+        with _sam_alert_lock:
+            _sam_alert_last_sent[key] = now
+
+    # Short, plain-text body; HTML is the same body wrapped in <pre>.
+    text_body = body if body.endswith("\n") else body + "\n"
+    html_body = (
+        f"<html><body style=\"font-family:'DM Sans',system-ui,sans-serif;color:#0F2A44;\">"
+        f"<pre style=\"white-space:pre-wrap;background:#F4EFE6;padding:16px 20px;"
+        f"border-radius:8px;font-family:ui-monospace,Menlo,Consolas,monospace;\">"
+        f"{body}</pre></body></html>"
+    )
+    try:
+        send_html(
+            to_email=recipient,
+            subject=subject,
+            html_body=html_body,
+            text_body=text_body,
+        )
+        return True
+    except EmailSendError as exc:
+        log.warning("alert_sam send failed tenant=%s event=%s: %s", tenant_id, event_type, exc)
+        return False
+
+
+def _reset_sam_alert_dedupe_for_tests() -> None:
+    """Test helper - drop the dedupe map so consecutive tests don't interfere."""
+    with _sam_alert_lock:
+        _sam_alert_last_sent.clear()

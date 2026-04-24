@@ -44,3 +44,5 @@ ask_global_limiter = SlidingWindowLimiter(max_events=2, window_seconds=60)  # 2 
 # from burning a day's budget in 30 seconds. 5/day is generous in practice;
 # the demo only needs 2 or 3 successful clicks.
 recs_refresh_limiter = SlidingWindowLimiter(max_events=5, window_seconds=86400)  # 5 / day / tenant for /api/recommendations/refresh
+# Sample generation hits Opus 7x per call; keep regens tight.
+activation_samples_limiter = SlidingWindowLimiter(max_events=5, window_seconds=300)  # 5 / 5min / tenant
