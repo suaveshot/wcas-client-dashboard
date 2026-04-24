@@ -738,3 +738,78 @@ Judge logs in and lands on `/dashboard`. The "What should we fix?" section shows
 ### What Day 3 morning starts with
 
 Activation Orchestrator scope unchanged from the v6 plan. The recs_generator pattern (compose context once, single Opus call, structured JSON, guardrail-finalize, persist) becomes the template for the post-activation "first 30-day check-in" Opus pass. Tonight earned a clean midnight push and unblocked Day 4 to focus on the bigger Activation + Admin builds.
+
+---
+
+## Entry 13  -  Day 4: OAuth + activation wizard + 14-tool Orchestrator
+**2026-04-23, late evening PDT**
+
+Day 4 turned the dashboard from "looks great, read-only" into "connects to real Google accounts and provisions pipelines." Sam asked early whether MCP servers could automate credential capture. After grounding in Anthropic MCP Connector docs + MCP 2025-11-25 spec, the answer was clear: the mechanism is OAuth, not Playwright-scraping (ToS-violating + liability-heavy). Winning architecture: OAuth-first for services that support it (Google covers 6 services in one consent click), screenshot-guided for API-key-only holdouts, and - newly locked tonight - concierge/subaccount provisioning for services WCAS hosts on its own master infrastructure (Twilio subaccounts, GHL sub-accounts, Airtable workspace bases, Hostinger VPS sites).
+
+### Track 1  -  credential storage + OAuth round-trip
+
+- **services/credentials.py** (~190 lines): per-tenant credential vault at /opt/wc-solns/<tenant>/credentials/<provider>.json. Atomic tmp+replace writes, POSIX chmod 0600 best-effort, path-traversal guarded via heartbeat_store.tenant_root. Public surface: store, load, list_connected, mark_validated, delete, access_token, plus granted_scopes/has_scope helpers. Process-local access-token cache keyed by (tenant_id, provider), 50-min TTL with 10-min headroom over Google's 3600s. store() + delete() invalidate cache so rotated refresh never hands out stale access. _exchange_google_refresh is the single network seam tests monkeypatch.
+- **api/oauth.py** (~240 lines): three routes. GET /auth/oauth/google/start (require_tenant, 32-byte state + 64-byte PKCE verifier + S256 challenge, signed into 5-min SameSite=Lax cookie scoped to /auth/oauth/, 303 to Google with access_type=offline + prompt=consent). GET /auth/oauth/google/callback (rejects missing state/code, expired/mismatched cookies, cross-tenant reuse, user-denied redirects to /activate?connect_error=access_denied; happy path exchanges code, stores refresh, clears cookie, 303 to /activate?connected=google). POST /api/activation/connect/{provider} returns oauth_start_url for the Managed Agent request_credential tool.
+- **SameSite cookie fix**: services/sessions.py Strict -> Lax. Strict blocks the session cookie on top-level GETs initiated cross-site - Google redirect-back is exactly that. Caught when the first live OAuth 401'd even with valid state. Lax still blocks CSRF-relevant POSTs. ADR-020 should be amended post-hackathon.
+- **Scrubber** (services/scrubber.py): added Google refresh + access token patterns. Reordered so all secret-shaped patterns fire BEFORE phone/email - a digit run inside a refresh was fragment-matching as [phone].
+
+### Track 2  -  activation state + validation probe
+
+- **services/activation_state.py** (~160 lines): ring grid state machine at /opt/wc-solns/<tenant>/activation.json. Monotonic step progression credentials -> config -> connected -> first_run. Public: get, role_step, advance (rejects regression, no-ops at same step), bulk_advance (skips roles already past target - the one-click-six-rings moment), reset_role, ring_view for templates. Corrupt JSON tolerated as empty.
+- **services/validation_probe.py** (~190 lines): discovery-mode probe fired after OAuth callback. probe_google(tenant_id) runs five sub-probes sequentially - Gmail profile, Calendar list, GSC sites, GA4 accountSummaries, GBP accounts->locations->reviews. Each sub-probe isolated in try/except. Per-request 8s timeout, single _get_json seam for test mocking. save_result/load_result persist so the activate page renders bullets after redirect.
+- **OAuth callback orchestrates all three**: after credentials.store(), bulk_advance to credentials -> run probe_google -> save_result -> if ok, bulk_advance to connected + mark validation_status=ok; on failure mark broken. Probe raising unhandled NEVER kills the redirect.
+
+### Track 3  -  activation wizard UI (the demo shot)
+
+- **templates/activate.html**: full-screen 45/55 layout (chat-left / ring-grid-right), 14 AP role cards in 3x5 desktop / 2-col mobile. Top bar with back link + progress + autosave dot + 4px orange progress bar. Chat column: locked first-message copy + conditional second "Connected" bubble with green-dot proof bullets driven off probe_summary. Spark glyph on assistant messages, no name, no model reference anywhere. Connect-Google CTA pill in orange with glow, morphs to green "Google connected" after credential lands.
+- **static/activate.js**: seeds ring states from DOM, polls /api/activation/state every 1.2s up to 5 times if ?connected=<provider> in URL, applies step transitions (CSS color transitions do the 420ms arc fill), scrubs query string after polling stabilizes.
+- **static/styles.css** (+293 lines): .ap-activate-* class library. Ring SVG: 4 arcs at 120x120 viewBox, stroke-dasharray 77.7/249 segments, offsets 0/-81.7/-163.4/-245.1 to stroke consecutive quarters. Default stroke --border-strong muted beige; data-role-step paints arcs teal as role progresses. first_run adds drop-shadow glow. Responsive breakpoints.
+- **/activate route** renders real template with require_tenant, merges hardcoded 14-role roster with ring_view. GET /api/activation/state returns JSON for JS polling.
+
+### Track 4  -  Activation Orchestrator tool surface
+
+- **services/tenant_kb.py** (~120 lines): per-tenant KB at /opt/wc-solns/<tenant>/kb/<section>.md. Whitelisted sections: company, services, voice, policies, pricing, faq, known_contacts. Atomic writes with generated header. ADR-006 single-source-of-truth every future Opus surface reads from.
+- **services/activation_tools.py** (~480 lines): 14 JSON schemas + 9 full handlers + 5 honest stubs. dispatch(tenant_id, tool_name, args) -> (ok, payload) with exception isolation. Full handlers: fetch_site_facts (httpx + 30k truncation, Opus extracts facts itself), confirm_company_facts, write_kb_entry, request_credential, activate_pipeline, capture_baseline, mark_activation_complete. Tier-2 full: create_ga4_property (GA4 Admin API account discovery -> property create -> data stream -> measurement ID, pre-checks analytics.edit scope and returns reconnect_required cleanly if missing), verify_gsc_domain (partial: adds site to GSC, returns DNS TXT spec; Hostinger DNS write deferred). Stubs returning not_yet_implemented: set_schedule, set_preference, set_timezone, set_goals, lookup_gbp_public - must resolve Friday morning before chat wires up.
+- **OAuth scope expansion**: analytics.readonly -> analytics.edit, webmasters.readonly -> webmasters. credentials.has_scope gates every creation tool.
+
+### Track 5  -  live end-to-end test
+
+Walked the full flow in a real browser:
+1. /auth/dev-login issues dev session (404s when PRODUCTION=true).
+2. /activate renders 14 gray rings + orange Connect Google button.
+3. Button -> accounts.google.com consent screen with 8 scopes.
+4. Approve -> /activate?connected=google with 3 rings filled teal, "Connected" bubble with real bullets.
+
+samyalarcon95@gmail.com (personal): Gmail 6492 msgs, Calendar 2, GSC 0, GA4+GBP 403'd because two sibling APIs (My Business Account Management + Google Analytics Admin) weren't enabled - I named the wrong APIs initially; fixed in memory. After enabling + re-OAuthing with americalpatrol@gmail.com: Gmail 1621, Calendar 1, GSC 2 sites incl. americalpatrol.com, GA4 1 account 1 property, GBP 429'd briefly from testing spam. Per-probe isolation paid off - one quota-limit didn't blank others.
+
+### What got verified
+
+**240 tests pass** (was 115 at end of Entry 12; +125 across 6 new suites): credentials (23), oauth_flow (17), activation_state (17), validation_probe (14), tenant_kb (11), activation_tools (39), plus smoke + security regressions for SameSite=Lax + /activate auth-required. All mocks at module boundaries. No real API hits in CI.
+
+### Files changed
+
+**New:** dashboard_app/api/oauth.py, services/activation_state.py, services/activation_tools.py, services/credentials.py, services/tenant_kb.py, services/validation_probe.py, static/activate.js, templates/activate.html, tests/test_activation_state.py, tests/test_activation_tools.py, tests/test_credentials.py, tests/test_oauth_flow.py, tests/test_tenant_kb.py, tests/test_validation_probe.py
+
+**Modified:** dashboard_app/main.py, services/scrubber.py, services/sessions.py, static/styles.css, tests/test_security.py, tests/test_smoke.py
+
+### Concierge/subaccount model locked
+
+Sam asked about non-Google services. Most can be provisioned programmatically but UNDER WCAS master infrastructure: Twilio subaccount + GHL sub-account + Airtable workspace base + Hostinger VPS site all under WCAS master creds; client's own Google accounts via OAuth; manual-signup vendors (GBP postcard, QBO) guided via chat. Reframes the story from "connect your accounts" to "WCAS provisions your stack". Pricing shifts from one-time project fee to setup + recurring monthly. Service-agreement must-haves before first real client: domain in client registrar, data portability on exit, limited account-creation authority, DPA clause, A2P 10DLC Brand per client, Google Ads manager-link disclosure. Lawyer review $500-1500 (task #35).
+
+### Production-ready standard locked
+
+Sam reminded mid-session that every WCAS build targets polished production quality, not demo-ready. Saved as feedback_production_ready_standard.md for future sessions. Baseline checklist: robustness with per-item isolation, security (chmod 600 + SameSite + PKCE + PII scrubber + rate limits), honest error UX (reconnect_required not raw 403), WCAG AA accessibility, real-device mobile, observability, graceful vendor-down fallbacks, data portability. Multi-day polish items flagged rather than shipped rough.
+
+### What Day 5 morning starts with
+
+Priority order locked:
+1. **15 min** - GCP Console consent screen: add analytics.edit + webmasters to approved scopes, /auth/dev-login -> re-consent for broader grant.
+2. **1 hr** - Kill the 5 stubbed tools BEFORE wiring chat. Remove from TOOL_SCHEMAS or implement the 4 cheap ones (set_schedule/set_preference/set_timezone/set_goals all JSON writes to existing services). No stubs reach the agent session.
+3. **3 hrs** - agents/activation_agent.py (Managed Agent factory + session + dispatch loop, reuses scripts/smoke_managed_agent.py pattern), api/activation_chat.py, chat UI in activate.html/activate.js, system-prompt tuning.
+4. **2.5 hrs production polish** interleaved: rate-limit /auth/oauth/google/start, activation autosave, async validation_probe via asyncio.gather, /healthz expansion (Airtable + Google OAuth + disk), accessibility audit, real iPhone test, end-to-end OAuth integration test with httpx_mock.
+5. **2 hrs submission prep** - scripts/sanitize_for_demo.py, VPS deploy, 14-point pre-submission test.
+6. **2-3 hrs video** - record, retake, upload.
+
+Cut list (locked): /admin view, Hostinger DNS automation, chat for the 11 non-Google roles, real GHL/Airtable/Twilio provisioning handlers.
+
+Post-hackathon security hardening (task #38): encrypted-at-rest refresh tokens via Fernet, CSP nonce on inline scripts, CI/CD with auto-deploy, activation funnel observability. Honest gaps to flag in README so judges see the roadmap.
