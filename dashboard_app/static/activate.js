@@ -100,6 +100,41 @@
     if (window.history && window.history.replaceState) {
       window.history.replaceState({}, "", window.location.pathname);
     }
+    // Once rings have settled, nudge the agent so it takes the lead instead
+    // of leaving the user staring at the composer wondering what's next.
+    await nudgeAgentAfterOAuth();
+  }
+
+  async function nudgeAgentAfterOAuth() {
+    // Fire once per page load. A URL-param-seeded flag keeps refreshes quiet.
+    if (window.__apActivateNudged) return;
+    window.__apActivateNudged = true;
+
+    const form = document.querySelector("[data-activate-composer]");
+    const input = form ? form.querySelector("[data-activate-input]") : null;
+    const sendBtn = form ? form.querySelector("[data-activate-send]") : null;
+
+    const thinking = appendThinking();
+    if (input) input.disabled = true;
+    if (sendBtn) sendBtn.disabled = true;
+
+    try {
+      const body = await postChat(
+        "Google is connected now. Tell me what's next and run it."
+      );
+      if (thinking) thinking.remove();
+      renderEvents(body.events || []);
+      renderRings(body.rings || []);
+      updateProgress(body.rings || []);
+    } catch (err) {
+      if (thinking) thinking.remove();
+      appendSystemBubble(
+        "I'll pick up from here once you send a message."
+      );
+    } finally {
+      if (input) { input.disabled = false; input.focus(); }
+      if (sendBtn) sendBtn.disabled = false;
+    }
   }
 
   // ---------------------------------------------------------------------

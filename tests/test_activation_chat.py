@@ -72,8 +72,9 @@ def test_chat_happy_path_returns_events_and_rings(monkeypatch):
     roles = [e.get("role") for e in body["events"]]
     assert "tool" in roles
     assert "assistant" in roles
-    # Ring grid reflects the 14 configured roles.
-    assert len(body["rings"]) == 14
+    # Ring grid reflects the configured roster (9 generic WCAS pipelines).
+    from dashboard_app.services.roster import ACTIVATION_ROSTER
+    assert len(body["rings"]) == len(ACTIVATION_ROSTER)
     # Reached idle
     assert body["reached_idle"] is True
     # Usage carried through
