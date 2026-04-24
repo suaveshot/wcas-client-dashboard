@@ -19,6 +19,10 @@ COPY --chown=app:app requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY --chown=app:app dashboard_app ./dashboard_app
+# scripts/ ships for: (a) the DEMO_MODE=true hook in home_context.py that
+# imports scripts.sanitize_for_demo, (b) docker exec ... python scripts/*
+# for ops tasks (sanitize --check/--write, seed_* helpers, refresh_recs).
+COPY --chown=app:app scripts ./scripts
 
 USER app
 
