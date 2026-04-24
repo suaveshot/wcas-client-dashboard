@@ -169,7 +169,7 @@ def build(tenant_id: str, owner_name: str = "", tenant_display: str = "") -> dic
     else:
         live_recs = seeded_recs.build(tenant_id, limit=3)
 
-    return {
+    ctx = {
         "tenant_name": display_name,
         "owner_name": owner_name or "there",
         "owner_initials": initials,
@@ -188,6 +188,26 @@ def build(tenant_id: str, owner_name: str = "", tenant_display: str = "") -> dic
         "recommendations": live_recs,
         "total_recs": len(live_recs),
     }
+    return _maybe_demo_mode(ctx)
+
+
+def _maybe_demo_mode(ctx: dict[str, Any]) -> dict[str, Any]:
+    """If DEMO_MODE=true, run the rendered context through the sanitizer.
+
+    Kept local so home_context has no hard dependency on the scripts/ tree
+    when the env flag is off.
+    """
+    import os
+    if os.getenv("DEMO_MODE", "false").lower() != "true":
+        return ctx
+    try:
+        from scripts import sanitize_for_demo  # type: ignore
+    except ImportError:
+        return ctx
+    try:
+        return sanitize_for_demo.apply_to_context(ctx)
+    except Exception:
+        return ctx
 
 
 def _display_from_slug(slug: str) -> str:

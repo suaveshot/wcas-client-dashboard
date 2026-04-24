@@ -1,11 +1,20 @@
 // Activation wizard client script.
-// - Reflects live ring state after an OAuth round-trip by polling
-//   /api/activation/state while ?connected=<provider> is in the URL.
-// - Animates arcs filling as roles advance through credentials ->
-//   config -> connected -> first_run.
+//
+// Day 4: ring-grid animation + post-OAuth poll loop.
+// Day 5: chat composer that POSTs to /api/activation/chat, renders
+//        assistant / tool / user bubbles, and refreshes the ring grid
+//        in the same round-trip.
+//
+// All DOM construction uses createElement + textContent so there is
+// no innerHTML surface for server content to reach.
 
 (() => {
   const STEP_ORDER = ["credentials", "config", "connected", "first_run"];
+  const SVG_NS = "http://www.w3.org/2000/svg";
+
+  // ---------------------------------------------------------------------
+  // Ring grid (Day 4 surface)
+  // ---------------------------------------------------------------------
 
   function applyRingState(ringEl, step) {
     if (!ringEl) return;
@@ -25,6 +34,7 @@
   }
 
   function renderRings(rings) {
+    if (!Array.isArray(rings)) return;
     const slots = document.querySelectorAll("[data-activate-ring]");
     const bySlug = {};
     for (const r of rings) bySlug[r.slug] = r;
@@ -37,6 +47,7 @@
   }
 
   function updateProgress(rings) {
+    if (!Array.isArray(rings)) return;
     const total = rings.length || 1;
     const completed = rings.filter((r) => r.step === "first_run").length;
     const started   = rings.filter((r) => r.step && r.step !== "pending").length;
@@ -44,14 +55,12 @@
     const labelEl = document.querySelector("[data-activate-progress-label]");
     const etaEl   = document.querySelector("[data-activate-progress-eta]");
     if (fillEl) {
-      // Weight partial progress across sub-steps so rings at "connected"
-      // show meaningful progress even before first_run.
       const partialPct = rings.reduce((sum, r) => sum + (r.percent_complete || 0), 0) / total;
       fillEl.style.width = `${Math.max(7, Math.round(partialPct * 100))}%`;
     }
     if (labelEl) labelEl.textContent = `Step ${Math.max(started, 1)} of ${total}`;
     if (etaEl) {
-      const remaining = Math.max(0, (total - completed) * 2); // rough 2 min / role
+      const remaining = Math.max(0, (total - completed) * 2);
       etaEl.textContent = remaining <= 1 ? "Almost done" : `About ${remaining} min left`;
     }
   }
@@ -73,8 +82,6 @@
     return fromAttr || url.searchParams.get("connected") || "";
   }
 
-  // If we just came back from OAuth, poll briefly so the ring grid
-  // reflects the server-side advance + probe outcome.
   async function pollAfterOAuth() {
     if (!connectedHint()) return;
     let attempts = 0;
@@ -90,32 +97,225 @@
       attempts += 1;
       await new Promise((r) => setTimeout(r, 1200));
     }
-    // Once we've landed stable state, scrub the query string so a reload
-    // doesn't re-trigger the poll loop.
     if (window.history && window.history.replaceState) {
-      const clean = window.location.pathname;
-      window.history.replaceState({}, "", clean);
+      window.history.replaceState({}, "", window.location.pathname);
     }
   }
 
-  document.addEventListener("DOMContentLoaded", () => {
-    // Seed the per-ring animation state from the initial DOM (server-rendered).
-    document.querySelectorAll("[data-activate-ring]").forEach((el) => {
-      const step = el.dataset.roleStep;
-      applyRingState(el, step || "pending");
+  // ---------------------------------------------------------------------
+  // Chat composer (Day 5) - DOM-only, no innerHTML
+  // ---------------------------------------------------------------------
+
+  function el(tag, className, text) {
+    const n = document.createElement(tag);
+    if (className) n.className = className;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+
+  function chatStream() {
+    return document.querySelector("[data-activate-chat]");
+  }
+
+  function scrollChatToBottom() {
+    const stream = chatStream();
+    if (!stream) return;
+    stream.scrollTop = stream.scrollHeight;
+  }
+
+  function appendUserBubble(text) {
+    const stream = chatStream();
+    if (!stream) return;
+    const msg = el("div", "ap-activate-msg ap-activate-msg--user");
+    const body = el("div", "ap-activate-msg__body", text);
+    msg.appendChild(body);
+    stream.appendChild(msg);
+    scrollChatToBottom();
+  }
+
+  function appendAssistantBubble(text) {
+    const stream = chatStream();
+    if (!stream) return;
+    const msg = el("div", "ap-activate-msg ap-activate-msg--asst");
+
+    const glyph = el("div", "ap-activate-msg__glyph");
+    glyph.setAttribute("aria-hidden", "true");
+    glyph.textContent = "✦"; // spark
+    msg.appendChild(glyph);
+
+    const body = el("div", "ap-activate-msg__body");
+    const p = el("p", null, text);
+    body.appendChild(p);
+    msg.appendChild(body);
+
+    stream.appendChild(msg);
+    scrollChatToBottom();
+  }
+
+  function appendToolEvent(evt) {
+    const stream = chatStream();
+    if (!stream) return;
+    const klass = evt.ok
+      ? "ap-activate-event ap-activate-event--ok"
+      : "ap-activate-event ap-activate-event--err";
+    const node = el("div", klass);
+
+    const ico = el("span", "ap-activate-event__ico", evt.ok ? "⚙" : "⚠");
+    ico.setAttribute("aria-hidden", "true");
+    node.appendChild(ico);
+
+    node.appendChild(el("span", "ap-activate-event__name", evt.name || "tool"));
+
+    const sep = el("span", "ap-activate-event__sep", "·");
+    sep.setAttribute("aria-hidden", "true");
+    node.appendChild(sep);
+
+    node.appendChild(el("span", "ap-activate-event__summary", evt.summary || ""));
+
+    stream.appendChild(node);
+    scrollChatToBottom();
+  }
+
+  function appendSystemBubble(text) {
+    const stream = chatStream();
+    if (!stream) return;
+    const msg = el("div", "ap-activate-msg ap-activate-msg--sys");
+    const body = el("div", "ap-activate-msg__body");
+    body.appendChild(el("p", null, text));
+    msg.appendChild(body);
+    stream.appendChild(msg);
+    scrollChatToBottom();
+  }
+
+  function appendThinking() {
+    const stream = chatStream();
+    if (!stream) return null;
+    const node = el("div", "ap-activate-thinking");
+    node.setAttribute("aria-live", "polite");
+
+    const glyph = el("div", "ap-activate-msg__glyph");
+    glyph.setAttribute("aria-hidden", "true");
+    glyph.textContent = "✦";
+    node.appendChild(glyph);
+
+    const dots = el("div", "ap-activate-thinking__dots");
+    dots.setAttribute("aria-hidden", "true");
+    dots.appendChild(el("span"));
+    dots.appendChild(el("span"));
+    dots.appendChild(el("span"));
+    node.appendChild(dots);
+
+    node.appendChild(el("span", "ap-sr", "Thinking"));
+
+    stream.appendChild(node);
+    scrollChatToBottom();
+    return node;
+  }
+
+  function renderEvents(events) {
+    if (!Array.isArray(events)) return;
+    for (const e of events) {
+      if (e.role === "assistant" && e.text) appendAssistantBubble(e.text);
+      else if (e.role === "tool")           appendToolEvent(e);
+      else if (e.role === "system" && e.text) appendSystemBubble(e.text);
+    }
+  }
+
+  async function postChat(message) {
+    const resp = await fetch("/api/activation/chat", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message }),
+    });
+    if (resp.status === 429) {
+      throw new Error("Slow down for a moment, I'm still catching up.");
+    }
+    if (!resp.ok) {
+      throw new Error("Something went sideways. Try that again.");
+    }
+    return await resp.json();
+  }
+
+  function wireComposer() {
+    const form = document.querySelector("[data-activate-composer]");
+    if (!form) return;
+    const input = form.querySelector("[data-activate-input]");
+    const sendBtn = form.querySelector("[data-activate-send]");
+    if (!input || !sendBtn) return;
+
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" && !ev.shiftKey) {
+        ev.preventDefault();
+        form.requestSubmit();
+      }
     });
 
-    // Initial progress bar from the server-rendered rings.
-    const initialRings = Array.from(document.querySelectorAll("[data-activate-ring]")).map((el) => ({
-      slug: el.dataset.roleSlug,
-      step: el.dataset.roleStep === "pending" ? null : el.dataset.roleStep,
-      percent_complete: 0,  // filled by applyRingState via CSS, not needed for bar math below
+    input.addEventListener("input", () => {
+      input.style.height = "auto";
+      const lh = parseInt(getComputedStyle(input).lineHeight, 10) || 22;
+      const maxH = lh * 6 + 24;
+      input.style.height = Math.min(input.scrollHeight, maxH) + "px";
+    });
+
+    form.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const raw = (input.value || "").trim();
+      if (!raw) return;
+
+      input.value = "";
+      input.style.height = "auto";
+      input.disabled = true;
+      sendBtn.disabled = true;
+
+      appendUserBubble(raw);
+      const thinking = appendThinking();
+
+      try {
+        const body = await postChat(raw);
+        if (thinking) thinking.remove();
+        renderEvents(body.events || []);
+        renderRings(body.rings || []);
+        updateProgress(body.rings || []);
+
+        if (!body.reached_idle) {
+          appendSystemBubble(
+            "Still thinking on my end. Send 'keep going' when you want me to pick up."
+          );
+        }
+      } catch (err) {
+        if (thinking) thinking.remove();
+        appendSystemBubble(err.message || "Something went sideways on my end.");
+      } finally {
+        input.disabled = false;
+        sendBtn.disabled = false;
+        input.focus();
+      }
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // Boot
+  // ---------------------------------------------------------------------
+
+  document.addEventListener("DOMContentLoaded", () => {
+    document.querySelectorAll("[data-activate-ring]").forEach((ringEl) => {
+      applyRingState(ringEl, ringEl.dataset.roleStep || "pending");
+    });
+
+    const initialRings = Array.from(document.querySelectorAll("[data-activate-ring]")).map((e) => ({
+      slug: e.dataset.roleSlug,
+      step: e.dataset.roleStep === "pending" ? null : e.dataset.roleStep,
+      percent_complete: 0,
     }));
-    // For the bar, re-derive percent per ring from its step.
     const STEP_PCT = { credentials: 0.25, config: 0.5, connected: 0.75, first_run: 1.0 };
     for (const r of initialRings) r.percent_complete = STEP_PCT[r.step] || 0;
     updateProgress(initialRings);
 
+    wireComposer();
     pollAfterOAuth();
   });
+
+  // Silence unused-var lint for the SVG_NS reference we kept for future use.
+  void SVG_NS;
 })();

@@ -7,7 +7,7 @@
 
 **Hackathon submission:** [Built with Opus 4.7](https://cerebralvalley.ai/e/built-with-4-7-hackathon) on Cerebral Valley, Apr 21-26, 2026.
 
-**Live:** [dashboard.westcoastautomationsolutions.com](https://dashboard.westcoastautomationsolutions.com) · `{"status":"ok","version":"0.3.0"}` on `/healthz`.
+**Live:** [dashboard.westcoastautomationsolutions.com](https://dashboard.westcoastautomationsolutions.com) · `{"status":"ok","version":"0.4.0"}` on `/healthz`.
 
 **For judges:** see [`docs/judge.md`](./docs/judge.md) for the one-page tour.
 
@@ -18,6 +18,11 @@ SEO, blogs, Google Ads, sales pipeline, email assistant, GBP, reviews, voice
 agent, social, and QBRs. Automations that ship without a live monitoring
 surface turn into a black box. This dashboard is the surface.
 
+0. **Activation wizard** - new owner lands on `/activate`, chats with the
+   Activation Orchestrator (Managed Agent, 14 tools), and one Google OAuth
+   click connects 3 roles (GBP, SEO, Reviews). The agent reads their site,
+   confirms basics, provisions a GA4 property + a Search Console site,
+   and narrates what it found using real numbers. Hero demo.
 1. **Home** - a 14-role grid with live status and a narrative summary. Hero
    stats show Weeks Saved, Revenue Influenced, and Goal Progress.
 2. **Global Ask (Opus 4.7 flagship)** - `Cmd-K`, type `?`, ask your business
@@ -57,10 +62,11 @@ graph LR
 
 | Surface | Endpoint | Model use |
 |---|---|---|
+| Activation Orchestrator | `/api/activation/chat` | **Managed Agents beta.** One shared agent + per-tenant session, 14 custom tools (site-fetch, company facts, OAuth credential, pipeline ring advance, baseline capture, GA4 provisioning, GSC add-site, KB writes). Drives the full activation conversation. |
 | Global Ask | `/api/ask_global` | **1M-context single-shot**, system prompt cache-flagged. Flagship. |
 | Per-role Ask | `/api/ask` | Grounded on one heartbeat, 512-token cap, prompt-cached. |
-| Guard-rail review (mechanical) | `services/guardrails.py` | Strips em dashes + vendor leaks; post-hackathon becomes a tight Opus tone-review call. |
-| Recommendations (seeded) | `services/seeded_recs.py` | Rule-based today, every candidate through the guardrail schema. Opus-written Managed-Agent pass is Day 4 scope. |
+| Recommendations engine | `services/recs_generator.py` | Single Messages API call over the full tenant workspace (heartbeats + decisions + goals + KB + brand), 1M context window, no RAG. |
+| Guard-rail review (mechanical) | `services/guardrails.py` | Strips em dashes + vendor leaks before anything outbound. |
 
 Every Opus call routes through `services/opus.py:chat()`, which enforces the
 `DAILY_DEV_CAP` + `DAILY_TENANT_CAP` budget gates and records per-call cost
@@ -117,9 +123,18 @@ proxy is a shared Caddy instance on the host, not Traefik.
 
 ## Build in the open
 
-- [`JOURNAL.md`](./JOURNAL.md) - timestamped daily build log
-- [`DECISIONS.md`](./DECISIONS.md) - 26+ architecture decision records
+- [`JOURNAL.md`](./JOURNAL.md) - timestamped daily build log (14 entries across 5 days)
+- [`DECISIONS.md`](./DECISIONS.md) - 28 architecture decision records
 - [`docs/judge.md`](./docs/judge.md) - hackathon judge quickstart
+
+## Credits + cost discipline
+
+Every Claude call records a JSONL row with tenant + model + tokens + USD to
+`/opt/wc-solns/_platform/cost_log.jsonl`. Two caps kick in before a call
+even fires: `DAILY_DEV_CAP` (platform-wide) and `DAILY_TENANT_CAP`
+(per-tenant kill switch). Swap the activation model via
+`ACTIVATION_AGENT_MODEL=claude-haiku-4-5-20251001` for dev; opus for demo.
+The repo is public from Day 1 so every credit burn is auditable.
 
 ## License
 

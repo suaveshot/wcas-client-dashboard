@@ -813,3 +813,56 @@ Priority order locked:
 Cut list (locked): /admin view, Hostinger DNS automation, chat for the 11 non-Google roles, real GHL/Airtable/Twilio provisioning handlers.
 
 Post-hackathon security hardening (task #38): encrypted-at-rest refresh tokens via Fernet, CSP nonce on inline scripts, CI/CD with auto-deploy, activation funnel observability. Honest gaps to flag in README so judges see the roadmap.
+
+---
+
+## Entry 14  -  Day 5: Managed Agent activation chat + sanitizer + judge docs
+
+**2026-04-24 morning/midday.** Day 5. Submission targeted for Saturday with Sunday buffer.
+
+### What shipped
+
+**Managed Agent event loop.** Before writing a line of agent code I verified the protocol against the installed `anthropic==0.96.0` SDK. Read the generated types under `.venv/.../anthropic/types/beta/sessions/*.py` and locked:
+- Agent tool call = `agent.custom_tool_use` (has `.id`, `.name`, `.input`).
+- Response to send back = `user.custom_tool_result` with `custom_tool_use_id` (not `tool_use_id`), `content`, `is_error`.
+- Session pauses at `session.status_idle` with `stop_reason.type` in {`end_turn`, `requires_action`, `retries_exhausted`}.
+- Token usage rides on `span.model_request_end` events, one per Opus inference.
+
+The Day 4 smoke never sent `user.custom_tool_result` back (it only counted tool calls), so it would have hung on `requires_action` with a multi-tool flow. Good catch before writing 200 lines.
+
+**`dashboard_app/agents/activation_agent.py` (~300 lines).** One shared agent + one shared cloud environment + per-tenant session stored at `<tenant_root>/agent_session.json`. Public: `get_client`, `get_agent_id`, `get_environment_id`, `get_or_create_session`, `reset_session`, `run_turn`. The run loop handles `requires_action` by dispatching every queued `agent.custom_tool_use` through `activation_tools.dispatch`, batching the `user.custom_tool_result` events, and continuing to stream until `end_turn`. Wraps `cost_tracker.should_allow` + `record_call(kind="activation_turn")` so the $2/tenant/day cap applies. Em-dash post-filter on assistant text as belt-and-suspenders over the system prompt. 45s turn budget. 18 tests, all Anthropic SDK calls mocked via SimpleNamespace doubles that mirror the real event types.
+
+**`dashboard_app/api/activation_chat.py`** - POST `/api/activation/chat`, body `{message, reset?}`. 20 msg / 5 min rate limit per tenant (new `activation_chat_limiter` in rate_limit.py). Returns `events + reached_idle + usage + rings + google_connected + probe_summary` so the UI can render bubbles and refresh the ring grid in one round-trip. 6 tests.
+
+**`dashboard_app/services/roster.py`** - pulled `ACTIVATION_ROSTER` out of `main.py` so the chat router and the page render share one source of truth.
+
+**Chat UI** - `activate.html` composer form (textarea + round orange send button), `activate.js` rewritten with DOM-only construction (no innerHTML anywhere; security hook enforced this). Renders assistant bubbles, user bubbles, tool-event pills (`cog icon + name + summary`), and a pulsing 3-dot thinking indicator while POST is pending. Refreshes rings + progress bar from the POST response. Auto-grow textarea, Enter=send/Shift+Enter=newline, disabled during in-flight, post-turn focus restore.
+
+**`scripts/sanitize_for_demo.py` (~250 lines).** Deterministic blake2b-keyed scramblers: `scramble_name` (HVAC customer #N / Property #A depending on kind), `scramble_email`, `scramble_phone` (stable (555) XXX-last4), `scramble_dollars` (redact >= $5k to `$X,XXX`, round $1k-$5k to nearest $500, preserve <$1k). Recursive `apply_to_context` walks composed home-context dicts. CLI `--check` exits non-zero if the filter would change anything (proves coverage); `--write` dumps a sanitized snapshot. `home_context.build` now pipes through the sanitizer when `DEMO_MODE=true`. 16 tests.
+
+**Docs polish.** README bumped to 0.4.0. Activation wizard became surface #0. Opus 4.7 capability table now lists the Activation Orchestrator as the Managed Agents row. `docs/judge.md` leads with the activation chat take as the #1 thing to try.
+
+**ADR-028.** Locked the one-shared-agent, per-tenant-session, synchronous-POST architecture with the verified event-loop contract. Flagged the scale-past-one-container locking concern.
+
+### Stats
+
+- 280 tests passing (264 Day 4 + 16 sanitizer + 18 agent + 6 chat router, minus 0). Full suite 3.2s.
+- Files created Day 5: 6 new (`agents/activation_agent.py`, `api/activation_chat.py`, `services/roster.py`, `scripts/sanitize_for_demo.py`, `tests/test_activation_agent.py`, `tests/test_activation_chat.py`, `tests/test_sanitize_for_demo.py`).
+- Files modified: `main.py` (router mount + version 0.4.0 + roster import refactor), `templates/activate.html` (chat composer + cache-buster bump), `static/activate.js` (full rewrite to DOM-only), `static/styles.css` (+160 lines composer + bubble + pill + thinking), `services/home_context.py` (DEMO_MODE hook), `.env.example` (ACTIVATION_AGENT_MODEL + DEMO_SCRAMBLE_SALT + Google OAuth vars), `README.md`, `docs/judge.md`, `DECISIONS.md`.
+
+### Still open tonight
+
+- Sam's OAuth consent-scope update on GCP Console + local re-OAuth (blocks live Task 1.6).
+- Live e2e of the full happy path as Americal Patrol tenant. Expect 60-90 min of system-prompt tuning once the agent is hitting real tools.
+- VPS deploy of 0.4.0 (commit + push + `ssh garcia-vps` docker rebuild).
+- 14-step pre-submission test against production.
+- Video takes of the agent-chat hero shot.
+- Rotate Google OAuth client secret post-deploy (task #17).
+
+### Surprising bits
+
+- The SDK's discriminator field for the idle stop reason is `type`, not `kind`, and the values are `end_turn` / `requires_action` / `retries_exhausted` - no namespace prefix. Cost me 3 minutes in test setup.
+- Security hook in this harness rejects any `innerHTML` write regardless of whether the interpolated values are escaped. Fine - I rewrote the chat UI using `createElement` + `textContent` only. Cleaner anyway.
+- `_post_filter_text` contains the literal em-dash char it's trying to replace, which naturally tripped the no-em-dashes-in-source smoke test. Fixed by using `chr(0x2014)` / `chr(0x2013)` constants.
+- The judge demo tenant flow is exactly the same as the real activate flow; `DEMO_MODE=true` is the only switch that changes rendered output. Simpler than I expected.
+

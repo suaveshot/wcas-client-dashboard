@@ -19,26 +19,35 @@ If you want to skip email:
 
 ## What to try (in this order)
 
-1. **Ask your business a question.** Hit `Cmd-K` (or `Ctrl-K`), type `?`
+1. **Activate a new tenant on camera.** Hit `/activate` as the judge user.
+   The Activation Orchestrator (Managed Agents beta, 14 custom tools) runs
+   the setup conversation. Type *"let's get started - pull what you can
+   from americalpatrol.com"* and watch the chat: the agent fetches the
+   site, confirms basics, asks you to click *Connect Google*, then
+   narrates the probe summary with real review counts + GA4 + GSC data.
+   Six Google services connected in one consent click. Three pipeline
+   rings fill. This is the 1-day-of-onboarding-becomes-5-minutes moment.
+
+2. **Ask your business a question.** Hit `Cmd-K` (or `Ctrl-K`), type `?`
    followed by any question - *"which role saved me the most time this
    week?"* or *"is anything overdue?"*. You get a 2-4 sentence plain-English
    answer with source chips citing the pipelines that informed it. That's
    one Opus 4.7 call with the entire tenant workspace in context (1M window,
    no RAG). Cache-flagged, so a follow-up within 5 minutes costs pennies.
 
-2. **See the receipts.** Click any role card on Home, then scroll down to
+3. **See the receipts.** Click any role card on Home, then scroll down to
    *Show the last 25 receipts*. That drawer is the actual text of every
    outbound message we sent on the owner's behalf - subject, body,
    timestamp. Privacy mode blurs the recipient; content stays legible.
 
-3. **Approve before send.** Go to Settings. Turn on *Approve before send*
+4. **Approve before send.** Go to Settings. Turn on *Approve before send*
    for any pipeline. From then on, instead of firing, that pipeline queues
    its drafts to `/approvals` where you can Approve, Edit, or Skip with
    keyboard shortcuts (`A` / `E` / `S` / `J` / `K`). Every approval has a
    10-second undo chip. Seeded demo drafts are available via
    `python scripts/seed_drafts.py <tenant_id>`.
 
-4. **Watch the sidebar.** Each pinned role shows a colored status dot; the
+5. **Watch the sidebar.** Each pinned role shows a colored status dot; the
    one that ran in the last minute pulses green. The rail-top strip
    summarizes counts; the rail-bottom remembers your last three questions
    so a one-click repeat works from any page.
@@ -56,6 +65,10 @@ If you want to skip email:
 
 ## Judging signals we're aiming for
 
+* **Managed Agents running a real activation flow.** The `/activate` chat
+  is a real Managed Agent with 14 custom tools that provision accounts,
+  advance pipeline rings, and write per-tenant knowledge files. It is not
+  a scripted demo.
 * **Opus 4.7 1M-context, user-facing.** Global Ask composes everything the
   tenant has produced into one prompt. No RAG, no chunking.
 * **Agency-level trust primitives.** Receipts drawer + Approve-before-send

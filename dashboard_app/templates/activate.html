@@ -11,7 +11,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="/static/styles.css?v=20260423b">
+    <link rel="stylesheet" href="/static/styles.css?v=20260424a">
 </head>
 <body class="ap-activate-body">
 <a href="#ap-activate-main" class="ap-sr">Skip to main content</a>
@@ -107,8 +107,9 @@
             {% endif %}
         </div>
 
-        {# Prompt bar. Before activation agent lands (Step 5), this is a
-           simple call-to-action. After Step 5 it becomes a real input. #}
+        {# Action bar: Connect Google affordance stays pinned above the chat
+           composer so the owner can click into OAuth at any point. After
+           Google is connected it collapses into a small status chip. #}
         <div class="ap-activate-action">
             {% if not google_connected %}
             <a class="ap-activate-connect" href="/auth/oauth/google/start" data-activate-connect-google>
@@ -117,16 +118,30 @@
                 </span>
                 Connect your Google account
             </a>
-            <p class="ap-activate-action__hint">Connects 3 roles in one click: Google Business, SEO, and Reviews.</p>
+            <p class="ap-activate-action__hint">One click connects 3 roles: Google Business, SEO, and Reviews.</p>
             {% else %}
-            <a class="ap-activate-connect ap-activate-connect--done" href="#" aria-disabled="true">
+            <div class="ap-activate-connect ap-activate-connect--done" aria-label="Google connected">
                 <span class="ap-activate-connect__ico" aria-hidden="true">
                     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
                 </span>
                 Google connected
-            </a>
-            <p class="ap-activate-action__hint">Chat-based setup for the other 11 roles is coming on Day 5.</p>
+            </div>
             {% endif %}
+
+            <form class="ap-activate-composer" data-activate-composer novalidate>
+                <label for="ap-activate-input" class="ap-sr">Your message</label>
+                <textarea id="ap-activate-input"
+                          class="ap-activate-composer__input"
+                          name="message"
+                          rows="2"
+                          placeholder="Answer or ask a question..."
+                          maxlength="4000"
+                          data-activate-input></textarea>
+                <button type="submit" class="ap-activate-composer__send"
+                        data-activate-send aria-label="Send">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4z"/></svg>
+                </button>
+            </form>
         </div>
     </section>
 
@@ -167,6 +182,6 @@
     </aside>
 </main>
 
-<script defer src="/static/activate.js?v=20260423b"></script>
+<script defer src="/static/activate.js?v=20260424a"></script>
 </body>
 </html>

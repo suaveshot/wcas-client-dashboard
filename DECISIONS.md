@@ -501,4 +501,48 @@ Short crisp entries for each major technical decision. Format: **what, why, alte
 
 ---
 
+## ADR-028  -  Activation Orchestrator: one shared agent, per-tenant session, synchronous POST turns
+
+**Date:** 2026-04-24 (Day 5 morning)
+
+**Status:** Accepted and shipped in `dashboard_app/agents/activation_agent.py` + `dashboard_app/api/activation_chat.py`.
+
+**Decision:** The Activation Orchestrator uses Anthropic's Managed Agents beta with exactly one agent (shared across all tenants), one shared cloud environment, and one session per tenant persisted to `/opt/wc-solns/<tenant>/agent_session.json`. Each owner message is a synchronous `POST /api/activation/chat` that drives one full turn (user.message → tool_use → tool.result → agent.message → end_turn) inside the request.
+
+**Why one shared agent:**
+- Agent identity = system prompt + tool schemas, not tenant state. Nothing per-tenant lives in the agent; it all lives in tool dispatch (tenant_id scopes everything).
+- `client.beta.agents.create` is billed and takes wall time. Re-creating per tenant would multiply that by every new client for zero product benefit.
+- Anthropic's prompt cache on the system prompt activates server-side at agent.create time, so a shared agent amortizes the cache across every session.
+
+**Why one shared cloud environment:**
+- Same argument. The 14 tools are all HTTP-to-Google or filesystem-to-tenant-root; neither touches sandboxed execution surfaces that would benefit from per-tenant envs.
+
+**Why per-tenant sessions (not per-request sessions):**
+- Activation is a conversation. The owner fetches their site, confirms facts, does OAuth, says "keep going." Session memory across turns is the whole point.
+- Session IDs cost nothing to hold; the cost is in the inference calls, which are capped.
+- `reset_session(tenant_id)` gives us a clean recovery path when a conversation gets stuck (UI surfaces a "start over" affordance post-hackathon).
+
+**Why synchronous POST (not SSE / WebSocket):**
+- Tool-heavy turns finish in 10-30s on observed paths; SSE would add a second transport + state-tracking surface we don't have time for.
+- Every turn is discrete from the UI's perspective: one user message in, one event log out. Event-stream semantics would be nice-to-have, not load-bearing.
+- Rate-limit + cost cap both live on the same POST endpoint, which keeps the enforcement path simple.
+
+**Event loop contract** (verified against anthropic-sdk-python 0.96.0 beta types):
+- `agent.custom_tool_use` events are queued mid-stream.
+- `session.status_idle` with `stop_reason.requires_action` means "resolve all pending tool calls now." Dispatch through `services.activation_tools.dispatch`, send `user.custom_tool_result` events back in a batch, stream continues.
+- `session.status_idle` with `stop_reason.end_turn` = done, return to caller.
+- `retries_exhausted` and `session.error` both surface as friendly `role=system` events in the UI event list; the session is NOT auto-reset so the owner can retry.
+
+**Trade-offs:**
+- If the agent misbehaves mid-activation, we have to issue a manual `reset_session` to recover. Acceptable for hackathon; post-hackathon we'll add a "start over" button in the UI.
+- A single session per tenant means concurrent owner tabs could race. Today's lock scope is in-process only; a second Uvicorn worker could double-dispatch a tool. One container today, not a current risk.
+- Cost tracker records per-turn token usage via `span.model_request_end` events summed across the turn. If the turn errors mid-stream, partial usage still lands in the JSONL which is the correct accounting.
+
+**Post-hackathon extensions:**
+- Swap to streaming POST (SSE) when multi-minute tool turns become common (e.g. full site migration).
+- Add a `reset` affordance in the UI (already wired server-side; just needs a button).
+- Move session locks to a shared store (Redis / Postgres advisory locks) once we scale past one container.
+
+---
+
 *More ADRs added as decisions are made during the build.*

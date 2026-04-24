@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from .api import activation_chat as activation_chat_api
 from .api import ask as ask_api
 from .api import ask_global as ask_global_api
 from .api import attention as attention_api
@@ -31,7 +32,7 @@ from .api import receipts as receipts_api
 from .api import recs as recs_api
 from .api import settings as settings_api
 from .api import tenant as tenant_api
-from .services import activation_state, activity_feed, credentials, errors, goals as goals_svc, home_context, outgoing_queue, recs_store, role_detail, security_headers, seeded_recs, telemetry, tenant_ctx, tenant_prefs, validation_probe
+from .services import activation_state, activity_feed, credentials, errors, goals as goals_svc, home_context, outgoing_queue, recs_store, role_detail, roster, security_headers, seeded_recs, telemetry, tenant_ctx, tenant_prefs, validation_probe
 from .services.tenant_ctx import current_session, require_tenant
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -43,7 +44,7 @@ TEMPLATES_DIR = APP_DIR / "templates"
 app = FastAPI(
     title="WCAS Client Dashboard",
     description="Agency-level client activation + live automation telemetry.",
-    version="0.3.0",
+    version="0.4.0",
 )
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -63,6 +64,7 @@ app.include_router(pipelines_api.router)
 app.include_router(brand_api.router)
 app.include_router(heartbeat_api.router)
 app.include_router(oauth_api.router)
+app.include_router(activation_chat_api.router)
 app.include_router(ask_api.router)
 app.include_router(ask_global_api.router)
 app.include_router(attention_api.router)
@@ -160,36 +162,18 @@ async def dev_login(tenant: str = "americal_patrol") -> RedirectResponse:
     return response
 
 
-# Ring grid roster for the activation wizard. 14 AP pipeline roles +
-# one summary slot = 15-cell 3x5 grid. For post-hackathon, this gets
-# derived per-tenant from a clients.json equivalent; hardcoded for the
-# demo tenant (AP).
-ACTIVATION_ROSTER: list[dict[str, str]] = [
-    {"slug": "gbp",              "name": "Google Business"},
-    {"slug": "seo",              "name": "SEO"},
-    {"slug": "reviews",          "name": "Reviews"},
-    {"slug": "sales_pipeline",   "name": "Sales Pipeline"},
-    {"slug": "blog",             "name": "Blog Posts"},
-    {"slug": "social",           "name": "Social Posts"},
-    {"slug": "ads",              "name": "Ads"},
-    {"slug": "chat_widget",      "name": "Chat Widget"},
-    {"slug": "qbr",              "name": "QBR Generator"},
-    {"slug": "patrol",           "name": "Morning Reports"},
-    {"slug": "harbor_lights",    "name": "HOA Parking"},
-    {"slug": "guard_compliance", "name": "Guard Compliance"},
-    {"slug": "weekly_update",    "name": "Weekly Update"},
-    {"slug": "watchdog",         "name": "Watchdog"},
-]
+# Ring grid roster lives in services/roster.py so main.py, api/activation_chat.py,
+# and anything else that renders the 14-ring grid share one source of truth.
 
 
 @app.get("/activate", response_class=HTMLResponse)
 async def activate_page(request: Request, tenant_id: str = Depends(require_tenant)) -> HTMLResponse:
     """Activation wizard: 45/55 chat-left + ring-grid-right layout."""
-    role_slugs = [r["slug"] for r in ACTIVATION_ROSTER]
+    role_slugs = roster.role_slugs()
     rings_by_slug = {r["slug"]: r for r in activation_state.ring_view(tenant_id, role_slugs)}
     roster_with_state = [
         {**role, **rings_by_slug.get(role["slug"], {"step": None, "percent_complete": 0.0})}
-        for role in ACTIVATION_ROSTER
+        for role in roster.ACTIVATION_ROSTER
     ]
     google_cred = credentials.load(tenant_id, "google")
     probe_summary = validation_probe.load_result(tenant_id, "google")
@@ -213,11 +197,11 @@ async def activate_page(request: Request, tenant_id: str = Depends(require_tenan
 @app.get("/api/activation/state")
 async def activation_state_api(tenant_id: str = Depends(require_tenant)) -> JSONResponse:
     """JSON state for the activate page's poll-after-OAuth flow."""
-    role_slugs = [r["slug"] for r in ACTIVATION_ROSTER]
+    role_slugs = roster.role_slugs()
     rings_by_slug = {r["slug"]: r for r in activation_state.ring_view(tenant_id, role_slugs)}
     rings = [
         {**role, **rings_by_slug.get(role["slug"], {"step": None, "percent_complete": 0.0})}
-        for role in ACTIVATION_ROSTER
+        for role in roster.ACTIVATION_ROSTER
     ]
     google_cred = credentials.load(tenant_id, "google")
     return JSONResponse({
