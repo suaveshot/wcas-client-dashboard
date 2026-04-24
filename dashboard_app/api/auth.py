@@ -158,7 +158,13 @@ async def verify_magic_link(request: Request, token: str = "") -> RedirectRespon
     clients_repo.mark_consumed(record["id"])
 
     cookie_value = sessions.issue(tenant_id=tenant_id, email=email, role=role)
-    landing = "/admin" if role == "admin" else "/dashboard"
+    # First-time owners land on /activate to run the onboarding chat; returning
+    # owners (activation already marked complete) go straight to /dashboard.
+    if role == "admin":
+        landing = "/admin"
+    else:
+        from ..services import activation_state
+        landing = "/dashboard" if activation_state.is_complete(tenant_id) else "/activate"
     response = RedirectResponse(url=landing, status_code=303)
     response.set_cookie(value=cookie_value, **sessions.cookie_kwargs())
     return response

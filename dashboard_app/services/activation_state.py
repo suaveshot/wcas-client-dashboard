@@ -176,6 +176,30 @@ def ring_view(tenant_id: str, role_slugs: list[str]) -> list[dict[str, Any]]:
     return out
 
 
+def mark_complete(tenant_id: str, note: str | None = None) -> dict[str, Any]:
+    """Flip the tenant to activated. Called by the mark_activation_complete tool.
+
+    Persists an `activated_at` timestamp so the post-login router knows to
+    land the owner on /dashboard instead of /activate.
+    """
+    state = get(tenant_id)
+    now = datetime.now(timezone.utc).isoformat()
+    state["activated_at"] = now
+    if note:
+        state["completion_note"] = str(note)[:280]
+    state["updated_at"] = now
+    _write(tenant_id, state)
+    return state
+
+
+def is_complete(tenant_id: str) -> bool:
+    """True once mark_complete has fired for this tenant."""
+    try:
+        return bool(get(tenant_id).get("activated_at"))
+    except Exception:
+        return False
+
+
 def _write(tenant_id: str, state: dict[str, Any]) -> Path:
     path = _state_path(tenant_id)
     path.parent.mkdir(parents=True, exist_ok=True)

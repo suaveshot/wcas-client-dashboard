@@ -209,13 +209,13 @@ def _capture_baseline(tenant_id: str, args: dict[str, Any]) -> dict[str, Any]:
 
 def _mark_activation_complete(tenant_id: str, args: dict[str, Any]) -> dict[str, Any]:
     """Mark the tenant as activated. First-run rings stay to be filled as pipelines execute."""
-    # Lightweight marker in the activation state file so /activate knows to
-    # show the 'done' view. Full tenant_config wiring is post-hackathon.
-    state = activation_state.get(tenant_id)
+    note = (args.get("note") or "").strip()
+    state = activation_state.mark_complete(tenant_id, note=note or None)
     return {
         "status": "activated",
+        "activated_at": state.get("activated_at"),
         "role_count": len(state.get("roles", {})),
-        "note": (args.get("note") or "").strip()
+        "note": note
         or "Activation wizard complete. Pipelines will fill their first-run rings as they execute.",
     }
 
