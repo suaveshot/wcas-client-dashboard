@@ -11,7 +11,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="/static/styles.css?v=20260424b">
+    <link rel="stylesheet" href="/static/styles.css?v=20260424c">
 </head>
 <body class="ap-activate-body">
 <a href="#ap-activate-main" class="ap-sr">Skip to main content</a>
@@ -146,17 +146,54 @@
     </section>
 
     {# ------------- RIGHT: ring grid ------------- #}
+    {# Icon catalog: tiny Lucide-style stroke SVGs, one per role. Rendered
+       inside the ring so the grid reads at a glance instead of looking like
+       nine identical circles. #}
+    {% set icons = {
+        "store":      "M3 7l2-4h14l2 4M3 7v13a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7M3 7h18",
+        "search":     "M21 21l-4.35-4.35M17 11a6 6 0 1 1-12 0 6 6 0 0 1 12 0z",
+        "star":       "M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z",
+        "funnel":     "M3 4h18l-7 8v6l-4 2v-8z",
+        "pen":        "M12 19l7-7 3 3-7 7h-3v-3zM18 13l-6-6 2-2 6 6z",
+        "share":      "M4 12a4 4 0 1 0 0-4 4 4 0 0 0 0 4zM20 4a4 4 0 1 0 0 4 4 4 0 0 0 0-4zM20 20a4 4 0 1 0-4-4 4 4 0 0 0 4 4zM8 12l8-5M8 12l8 5",
+        "megaphone":  "M3 11l14-7v16l-14-7v-2zM10 18a3 3 0 1 1-6 0",
+        "message":    "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z",
+        "file-check": "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2l6 6h-6zM9 15l2 2 4-4"
+    } %}
+
     <aside class="ap-activate-rings" aria-label="Role readiness grid" data-activate-rings
            data-connected-hint="{{ connected_hint }}">
         <h2 class="ap-activate-rings__title">Your {{ roster|length }} roles</h2>
-        <p class="ap-activate-rings__sub">Credentials &rarr; Config &rarr; Connected &rarr; First run.</p>
+
+        {# Visual key: 4 mini-arcs showing the stage progression so it's clear
+           that a ring with 3 teal arcs means "3 of 4 steps complete." #}
+        <div class="ap-activate-legend" role="img" aria-label="Each ring advances through 4 stages">
+            <div class="ap-activate-legend__item">
+                <span class="ap-activate-legend__dot ap-activate-legend__dot--1"></span>
+                <span>Credentials</span>
+            </div>
+            <div class="ap-activate-legend__item">
+                <span class="ap-activate-legend__dot ap-activate-legend__dot--2"></span>
+                <span>Config</span>
+            </div>
+            <div class="ap-activate-legend__item">
+                <span class="ap-activate-legend__dot ap-activate-legend__dot--3"></span>
+                <span>Connected</span>
+            </div>
+            <div class="ap-activate-legend__item">
+                <span class="ap-activate-legend__dot ap-activate-legend__dot--4"></span>
+                <span>First run</span>
+            </div>
+        </div>
+
         <div class="ap-activate-rings__grid">
             {% for role in roster %}
-            <div class="ap-activate-ring" data-activate-ring data-role-slug="{{ role.slug }}" data-role-step="{{ role.step or 'pending' }}">
-                <svg viewBox="0 0 120 120" width="96" height="96" aria-hidden="true" class="ap-activate-ring__svg">
-                    {# Four sub-arcs, starting from 12 o'clock, clockwise. Each arc is a
-                       stroke-dasharray segment of a circle of radius 52, circumference 326.7.
-                       Arc fill states are driven by the data-role-step attribute + JS. #}
+            {% set step = role.step or 'pending' %}
+            {% set completed = {'credentials': 1, 'config': 2, 'connected': 3, 'first_run': 4}.get(step, 0) %}
+            <div class="ap-activate-ring" data-activate-ring data-role-slug="{{ role.slug }}" data-role-step="{{ step }}">
+                <svg viewBox="0 0 120 120" width="104" height="104" aria-hidden="true" class="ap-activate-ring__svg">
+                    {# Four sub-arcs, starting from 12 o'clock, clockwise. Arc fill states
+                       are driven by the data-role-step attribute + CSS. #}
                     <g transform="rotate(-90 60 60)">
                         <circle class="ap-activate-ring__arc ap-activate-ring__arc--1" cx="60" cy="60" r="52"
                                 fill="none" stroke-width="8" stroke-linecap="butt"
@@ -171,10 +208,21 @@
                                 fill="none" stroke-width="8" stroke-linecap="butt"
                                 stroke-dasharray="77.7 249" stroke-dashoffset="-245.1"></circle>
                     </g>
+                    {# Role icon in the center of the ring. Single-color stroke,
+                       inherits from .ap-activate-ring__icon color. #}
+                    <g class="ap-activate-ring__icon" transform="translate(36 36) scale(2)">
+                        <path d="{{ icons.get(role.icon, icons['store']) }}"
+                              fill="none" stroke="currentColor" stroke-width="1.6"
+                              stroke-linecap="round" stroke-linejoin="round"></path>
+                    </g>
                 </svg>
                 <div class="ap-activate-ring__label">{{ role.name }}</div>
                 <div class="ap-activate-ring__step" data-activate-ring-step>
-                    {% if role.step == "first_run" %}Running{% elif role.step == "connected" %}Connected{% elif role.step == "config" %}Configuring{% elif role.step == "credentials" %}Credentials set{% else %}Not started{% endif %}
+                    {% if role.step == "first_run" %}Running &middot; 4 of 4
+                    {% elif role.step == "connected" %}Connected &middot; 3 of 4
+                    {% elif role.step == "config" %}Configuring &middot; 2 of 4
+                    {% elif role.step == "credentials" %}Credentials &middot; 1 of 4
+                    {% else %}Not started &middot; 0 of 4{% endif %}
                 </div>
             </div>
             {% endfor %}
@@ -182,6 +230,6 @@
     </aside>
 </main>
 
-<script defer src="/static/activate.js?v=20260424b"></script>
+<script defer src="/static/activate.js?v=20260424c"></script>
 </body>
 </html>

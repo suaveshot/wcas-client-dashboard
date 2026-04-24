@@ -3676,6 +3676,42 @@ body.ap-receipts-drawer-open { overflow: hidden; }
   text-transform: uppercase;
 }
 
+/* Visual key: 4 dots + stage names. Reinforces that each ring is a
+   4-stage progression, so "3 of 4 arcs filled" reads as expected. */
+.ap-activate-legend {
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+  flex-wrap: wrap;
+  margin-bottom: var(--s-5);
+  padding: var(--s-3) var(--s-4);
+  background: var(--bg);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-md);
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+.ap-activate-legend__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.ap-activate-legend__dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--border-strong);
+}
+.ap-activate-legend__dot--1 { background: color-mix(in srgb, var(--teal) 55%, var(--border-strong)); }
+.ap-activate-legend__dot--2 { background: color-mix(in srgb, var(--teal) 75%, var(--border-strong)); }
+.ap-activate-legend__dot--3 { background: var(--teal); }
+.ap-activate-legend__dot--4 {
+  background: var(--teal);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--teal) 30%, transparent);
+}
+
 .ap-activate-rings__grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -3709,6 +3745,19 @@ body.ap-receipts-drawer-open { overflow: hidden; }
 .ap-activate-ring[data-role-step="first_run"]   .ap-activate-ring__arc { stroke: var(--teal); }
 .ap-activate-ring[data-role-step="first_run"]   .ap-activate-ring__svg {
   filter: drop-shadow(0 0 8px rgba(46, 143, 168, 0.35));
+}
+
+/* Role icon sits in the center of the ring. Inherits color from the ring's
+   data-role-step state - muted when pending, ink-dark when any progress. */
+.ap-activate-ring__icon {
+  color: var(--ink-faint);
+  transition: color var(--t-slow) var(--ease);
+}
+.ap-activate-ring[data-role-step="credentials"] .ap-activate-ring__icon,
+.ap-activate-ring[data-role-step="config"]      .ap-activate-ring__icon,
+.ap-activate-ring[data-role-step="connected"]   .ap-activate-ring__icon,
+.ap-activate-ring[data-role-step="first_run"]   .ap-activate-ring__icon {
+  color: var(--ink);
 }
 
 .ap-activate-ring__label {

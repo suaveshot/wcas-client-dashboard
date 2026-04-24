@@ -14,15 +14,15 @@ from __future__ import annotations
 
 
 ACTIVATION_ROSTER: list[dict[str, str]] = [
-    {"slug": "gbp",            "name": "Google Business"},
-    {"slug": "seo",            "name": "SEO"},
-    {"slug": "reviews",        "name": "Reviews"},
-    {"slug": "sales_pipeline", "name": "Sales Pipeline"},
-    {"slug": "blog",           "name": "Blog Posts"},
-    {"slug": "social",         "name": "Social Posts"},
-    {"slug": "ads",            "name": "Ads"},
-    {"slug": "chat_widget",    "name": "Chat Widget"},
-    {"slug": "qbr",            "name": "QBR Generator"},
+    {"slug": "gbp",            "name": "Google Business", "icon": "store"},
+    {"slug": "seo",            "name": "SEO",             "icon": "search"},
+    {"slug": "reviews",        "name": "Reviews",         "icon": "star"},
+    {"slug": "sales_pipeline", "name": "Sales Pipeline",  "icon": "funnel"},
+    {"slug": "blog",           "name": "Blog Posts",      "icon": "pen"},
+    {"slug": "social",         "name": "Social Posts",    "icon": "share"},
+    {"slug": "ads",            "name": "Ads",             "icon": "megaphone"},
+    {"slug": "chat_widget",    "name": "Chat Widget",     "icon": "message"},
+    {"slug": "qbr",            "name": "QBR Generator",   "icon": "file-check"},
 ]
 
 
