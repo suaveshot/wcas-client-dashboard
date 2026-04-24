@@ -20,6 +20,12 @@ bug, not a gap we silently fill.
     pricing          -> rate card, minimum charge, estimate policy
     faq              -> common customer questions + canonical answers
     known_contacts   -> recurring callers the owner wants recognized
+    existing_stack   -> what tools the client uses today (CRM, email,
+                        phone, calendar, etc.) captured during onboarding
+    provisioning_plan -> per-pipeline handoff for Sam: which services
+                         connect to the client's existing tools, which
+                         WCAS provisions, which the owner signs up for
+                         with Sam's help
 """
 
 from __future__ import annotations
@@ -40,6 +46,8 @@ SECTIONS: frozenset[str] = frozenset({
     "pricing",
     "faq",
     "known_contacts",
+    "existing_stack",
+    "provisioning_plan",
 })
 
 _SAFE_SECTION = re.compile(r"^[a-z][a-z_]{0,31}$")

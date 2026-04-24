@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Onboarding complete &middot; WCAS Client Dashboard</title>
+    <meta name="robots" content="noindex">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/styles.css?v=20260424e">
+</head>
+<body>
+<main class="landing">
+    <span class="landing__eyebrow">WestCoast Automation Solutions</span>
+    <h1>{{ heading or "Onboarding is closed for this account" }}</h1>
+    <p class="landing__lead">
+        {{ message or "Your activation wizard already finished, or Sam hasn't opened onboarding for your account yet. If you expected to see the setup flow, reach out and we'll get you sorted." }}
+    </p>
+
+    <div class="landing__meta" style="margin-top:32px;">
+        <p>
+            Email
+            <a href="mailto:sam@westcoastautomationsolutions.com?subject=Onboarding%20access%20for%20{{ tenant_id or 'my%20account' }}">sam@westcoastautomationsolutions.com</a>.
+        </p>
+        <p><a href="/dashboard">Back to your dashboard</a></p>
+    </div>
+</main>
+</body>
+</html>

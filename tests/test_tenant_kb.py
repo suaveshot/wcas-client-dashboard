@@ -88,3 +88,32 @@ def test_write_section_strips_trailing_whitespace(_tenant_root):
     # Exactly one trailing newline.
     assert body.endswith("Name: X\n")
     assert not body.endswith("\n\n")
+
+
+def test_existing_stack_section_roundtrip(_tenant_root):
+    """existing_stack captures the client's current tools during onboarding."""
+    body = "- CRM: GoHighLevel\n- Email: Gmail\n- Phone: Google Voice\n"
+    tenant_kb.write_section("acme", "existing_stack", body)
+    read = tenant_kb.read_section("acme", "existing_stack")
+    assert read is not None
+    assert "# Existing Stack" in read
+    assert "GoHighLevel" in read
+
+
+def test_provisioning_plan_section_roundtrip(_tenant_root):
+    """provisioning_plan is Sam's concierge handoff doc."""
+    body = "## sales_pipeline\n- Strategy: connect_existing\n- Owner task: paste key\n"
+    tenant_kb.write_section("acme", "provisioning_plan", body)
+    read = tenant_kb.read_section("acme", "provisioning_plan")
+    assert read is not None
+    assert "# Provisioning Plan" in read
+    assert "connect_existing" in read
+
+
+def test_new_sections_appear_in_sections_frozenset():
+    """Guard against accidental removal of the onboarding sections."""
+    assert "existing_stack" in tenant_kb.SECTIONS
+    assert "provisioning_plan" in tenant_kb.SECTIONS
+    # And the original seven are still there.
+    for expected in ("company", "services", "voice", "policies", "pricing", "faq", "known_contacts"):
+        assert expected in tenant_kb.SECTIONS

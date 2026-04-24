@@ -38,13 +38,29 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
-from ..services import activation_state, credentials, errors, validation_probe
+from fastapi.templating import Jinja2Templates
+
+from ..services import activation_state, credentials, errors, scope_transparency, validation_probe
 from ..services.scrubber import scrub
 from ..services.tenant_ctx import require_tenant
 
 log = logging.getLogger("dashboard.oauth")
 
 router = APIRouter(tags=["oauth"])
+
+_TEMPLATES: Jinja2Templates | None = None
+
+
+def attach_templates(templates: Jinja2Templates) -> None:
+    """Called from main.py after the Jinja environment is set up."""
+    global _TEMPLATES
+    _TEMPLATES = templates
+
+
+def _tmpl() -> Jinja2Templates:
+    if _TEMPLATES is None:
+        raise RuntimeError("oauth templates not attached")
+    return _TEMPLATES
 
 
 GOOGLE_AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -72,7 +88,7 @@ GOOGLE_SCOPES = [
 ]
 
 OAUTH_STATE_COOKIE_NAME = "wcas_oauth_state"
-OAUTH_STATE_MAX_AGE_SECONDS = 300  # 5 minutes
+OAUTH_STATE_MAX_AGE_SECONDS = 300 # 5 minutes
 
 # Role slugs that get advanced when a tenant completes Google OAuth.
 # These are the existing AP pipelines that leverage the Google APIs we
@@ -136,11 +152,42 @@ def _google_client_config() -> tuple[str, str, str]:
 # --- routes -----------------------------------------------------------------
 
 
+@router.get("/auth/oauth/google/preview")
+async def preview_google_oauth(
+    request: Request,
+    tenant_id: str = Depends(require_tenant),
+):
+    """Render the plain-English scope-transparency screen before Google OAuth.
+
+    Clicking through points the browser at /auth/oauth/google/start?consent=1
+    which is the only code path that actually redirects to accounts.google.com.
+    """
+    will_do, will_not = scope_transparency.promises_for("google", GOOGLE_SCOPES)
+    return _tmpl().TemplateResponse(
+        request,
+        "activate/scope_preview.html",
+        {
+            "provider_label": scope_transparency.provider_display_name("google"),
+            "will_do": will_do,
+            "will_not": will_not,
+            "continue_url": "/auth/oauth/google/start?consent=1",
+        },
+    )
+
+
 @router.get("/auth/oauth/google/start")
 async def start_google_oauth(
+    request: Request,
     tenant_id: str = Depends(require_tenant),
 ) -> RedirectResponse:
-    """Kick off the Google OAuth flow for the current tenant."""
+    """Kick off the Google OAuth flow for the current tenant.
+
+    Requires ?consent=1 - without it we redirect to the scope-preview
+    screen first so the owner sees what the grant means in plain English.
+    """
+    if request.query_params.get("consent") != "1":
+        return RedirectResponse(url="/auth/oauth/google/preview", status_code=303)
+
     try:
         client_id, _secret, redirect_uri = _google_client_config()
     except RuntimeError as exc:
@@ -257,7 +304,7 @@ async def google_oauth_callback(
             credentials.mark_validated(tenant_id, "google", "ok")
         else:
             credentials.mark_validated(tenant_id, "google", "broken")
-    except Exception:  # probe must never kill the redirect
+    except Exception: # probe must never kill the redirect
         log.exception("probe_google raised for tenant=%s", tenant_id)
         credentials.mark_validated(tenant_id, "google", "broken")
 

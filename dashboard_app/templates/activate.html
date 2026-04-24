@@ -11,7 +11,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="/static/styles.css?v=20260424d">
+    <link rel="stylesheet" href="/static/styles.css?v=20260424e">
 </head>
 <body class="ap-activate-body">
 <a href="#ap-activate-main" class="ap-sr">Skip to main content</a>
@@ -22,7 +22,7 @@
         <span>Dashboard</span>
     </a>
     <div class="ap-activate-bar__progress" role="status" aria-live="polite">
-        <span class="ap-activate-bar__progress-label" data-activate-progress-label>Step 1 of 14</span>
+        <span class="ap-activate-bar__progress-label" data-activate-progress-label>Step 1 of {{ roster|length }}</span>
         <span class="ap-activate-bar__progress-dot" aria-hidden="true">·</span>
         <span class="ap-activate-bar__progress-eta" data-activate-progress-eta>About 12 min left</span>
     </div>
@@ -43,11 +43,11 @@
                 <div class="ap-activate-msg__glyph" aria-hidden="true">&#10022;</div>
                 <div class="ap-activate-msg__body">
                     <p class="ap-activate-msg__first">
-                        Welcome in. I'm going to set up 14 roles for you, one at a time.
+                        Welcome in. I'm going to set up your {{ roster|length }} automations, one at a time.
                     </p>
                     <p>
-                        Most owners finish in about 45 minutes. If you need to stop, I save as we go.
-                        Ready to start with the easy one?
+                        Most owners finish in about 20 minutes. If you need to stop, I save as we go.
+                        What's your website URL? Paste it and I'll take it from there.
                     </p>
                 </div>
             </div>
@@ -112,13 +112,13 @@
            Google is connected it collapses into a small status chip. #}
         <div class="ap-activate-action">
             {% if not google_connected %}
-            <a class="ap-activate-connect" href="/auth/oauth/google/start" data-activate-connect-google>
+            <a class="ap-activate-connect" href="/auth/oauth/google/preview" data-activate-connect-google>
                 <span class="ap-activate-connect__ico" aria-hidden="true">
                     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
                 </span>
                 Connect your Google account
             </a>
-            <p class="ap-activate-action__hint">One click connects 3 roles: Google Business, SEO, and Reviews.</p>
+            <p class="ap-activate-action__hint">One click connects four automations: Google Business, SEO, Reviews, and the email assistant.</p>
             {% else %}
             <div class="ap-activate-connect ap-activate-connect--done" aria-label="Google connected">
                 <span class="ap-activate-connect__ico" aria-hidden="true">
@@ -137,11 +137,18 @@
                           placeholder="Keep going, or tell me what you want to tackle..."
                           maxlength="4000"
                           data-activate-input></textarea>
+                <label class="ap-activate-composer__camera" for="ap-activate-screenshot"
+                       aria-label="Attach screenshot" title="Attach screenshot">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                    <input id="ap-activate-screenshot" type="file" accept="image/png,image/jpeg,image/webp"
+                           class="ap-sr" data-activate-screenshot>
+                </label>
                 <button type="submit" class="ap-activate-composer__send"
                         data-activate-send aria-label="Send">
                     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4z"/></svg>
                 </button>
             </form>
+            <div class="ap-activate-attachments" data-activate-attachments aria-live="polite"></div>
         </div>
     </section>
 
@@ -228,9 +235,20 @@
                     {% elif role.step == "credentials" %}Credentials &middot; 1 of 4
                     {% else %}Not started &middot; 0 of 4{% endif %}
                 </div>
+                <span class="ap-activate-chip" data-activate-ring-chip hidden></span>
             </div>
             {% endfor %}
         </div>
+
+        {# Samples panel: hidden until mark_activation_complete fires and the UI
+           pulls the 7 per-pipeline samples from /api/activation/samples. #}
+        <section class="ap-activate-samples" data-activate-samples hidden>
+            <h3 class="ap-activate-samples__title">Your first-week drafts</h3>
+            <p class="ap-activate-samples__lead">
+                Generated from what you just told me. Review, edit, publish.
+            </p>
+            <div class="ap-activate-samples__grid" data-activate-samples-grid></div>
+        </section>
     </aside>
 </main>
 

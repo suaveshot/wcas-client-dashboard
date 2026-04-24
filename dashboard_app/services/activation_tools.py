@@ -11,8 +11,8 @@ a JSON-serializable dict the dispatch layer wraps into a
 `tool_result` event back to the agent.
 
 Tool status:
-  - fully implemented   -> real server-side effect, returns real data
-  - stub                -> returns {"status": "not_yet_implemented", ...}
+  - fully implemented -> real server-side effect, returns real data
+  - stub -> returns {"status": "not_yet_implemented", ...}
                             so the agent can still plan the conversation
                             without crashing. Light-touch honesty.
 
@@ -24,18 +24,43 @@ once the Managed Agent loop + chat UI are wired.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Any, Callable
 
 import httpx
 
 from . import (
     activation_state,
+    audit_log,
+    clients_repo,
     credentials,
+    email_sender,
+    heartbeat_store,
     tenant_kb,
     validation_probe,
 )
 
 log = logging.getLogger("dashboard.activation_tools")
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+# §0e Provisioning-tool gate. Tools that create real external infrastructure
+# (new GA4 properties, GSC registrations, future Twilio sub-accounts, etc.)
+# require the tenant's Onboarding Approved flag to be true. Non-provisioning
+# tools (fetch_site_facts, write_kb_entry, activate_pipeline, etc.) run on
+# any authenticated tenant so Sam can demo the conversation even on a not-
+# yet-approved tenant row.
+PROVISIONING_TOOLS: frozenset[str] = frozenset({
+    "create_ga4_property",
+    "verify_gsc_domain",
+})
+
+# §0g Sam-alerting map. Tool calls that should wake Sam when they fire.
+# Rate-limited per (tenant, event_type) in email_sender.alert_sam.
+_TOOLS_THAT_ALERT_SAM: frozenset[str] = PROVISIONING_TOOLS | {"mark_activation_complete"}
 
 
 class ToolError(RuntimeError):
@@ -45,6 +70,20 @@ class ToolError(RuntimeError):
 # ============================================================================
 # Fully implemented tools
 # ============================================================================
+
+
+def _httpx_get(url: str, *, timeout: float = 10.0) -> "httpx.Response":
+    """Shared GET wrapper used by fetch_site_facts + detect_website_platform.
+    Extracted so tests can monkeypatch a single seam."""
+    return httpx.get(
+        url,
+        timeout=timeout,
+        follow_redirects=True,
+        headers={
+            "User-Agent": "WCAS-Activation/1.0 (+https://westcoastautomationsolutions.com)",
+            "Accept": "text/html,application/xhtml+xml",
+        },
+    )
 
 
 def _fetch_site_facts(tenant_id: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -63,15 +102,7 @@ def _fetch_site_facts(tenant_id: str, args: dict[str, Any]) -> dict[str, Any]:
 
     fetched: dict[str, Any] = {"url": url, "pages": []}
     try:
-        resp = httpx.get(
-            url,
-            timeout=10.0,
-            follow_redirects=True,
-            headers={
-                "User-Agent": "WCAS-Activation/1.0 (+https://westcoastautomationsolutions.com)",
-                "Accept": "text/html,application/xhtml+xml",
-            },
-        )
+        resp = _httpx_get(url, timeout=10.0)
     except httpx.HTTPError as exc:
         raise ToolError(f"fetch failed: {exc}") from exc
 
@@ -94,6 +125,175 @@ def _fetch_site_facts(tenant_id: str, args: dict[str, Any]) -> dict[str, Any]:
         "with what you find. Only ask the owner for genuine gaps."
     )
     return fetched
+
+
+def _detect_website_platform(tenant_id: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Classify a client's website by platform + host so the agent can
+    pivot the conversation on turn 1.
+
+    Checks (in priority order):
+      1. <meta name="generator" ...> tag - most platforms self-identify
+      2. Common CDN / asset path fingerprints in the HTML
+      3. Specific subdomain patterns (*.myshopify.com, *.webflow.io)
+      4. Response headers (powered-by, server, x-shopify-*)
+
+    Host-provider guess is best-effort based on IP-range heuristics via
+    the response's origin IP (exposed by httpx in resp.extensions) or
+    header signals. Returns "unknown" when signals are inconclusive - 
+    we never guess when we're not sure.
+
+    `takeover_feasible` is the flag the orchestrator uses to decide
+    whether WCAS can offer to host the site. True for static + WordPress,
+    False for managed platforms like Shopify / Wix / Squarespace.
+    """
+    url = (args.get("url") or "").strip()
+    if not url:
+        raise ToolError("url is required")
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+
+    try:
+        resp = _httpx_get(url, timeout=10.0)
+    except httpx.HTTPError as exc:
+        raise ToolError(f"fetch failed: {exc}") from exc
+
+    body = (resp.text or "")[:60_000] # platform fingerprints live near the top
+    body_lower = body.lower()
+    headers_lower = {k.lower(): (v or "").lower() for k, v in resp.headers.items()}
+    final_url = str(resp.url).lower()
+
+    signals: list[str] = []
+    platform = "unknown"
+
+    # --- Generator meta tag --------------------------------------------------
+    import re as _re
+    gen_match = _re.search(
+        r'<meta\s+name=["\']generator["\']\s+content=["\']([^"\']+)["\']',
+        body,
+        _re.IGNORECASE,
+    )
+    generator_value = (gen_match.group(1) if gen_match else "").strip()
+    if generator_value:
+        signals.append(f"generator meta: {generator_value[:80]}")
+        gl = generator_value.lower()
+        if "wordpress" in gl:
+            platform = "wordpress"
+        elif "squarespace" in gl:
+            platform = "squarespace"
+        elif "wix" in gl:
+            platform = "wix"
+        elif "webflow" in gl:
+            platform = "webflow"
+        elif "shopify" in gl:
+            platform = "shopify"
+        elif "ghost" in gl:
+            platform = "ghost"
+
+    # --- Fingerprint fallbacks (run even if generator matched, to add signals)
+    if "cdn.shopify.com" in body_lower or ".myshopify.com" in final_url or headers_lower.get("x-shopify-stage"):
+        platform = "shopify" if platform == "unknown" else platform
+        signals.append("shopify fingerprint")
+    if "static.wixstatic.com" in body_lower or ".wixsite.com" in final_url:
+        platform = "wix" if platform == "unknown" else platform
+        signals.append("wix fingerprint")
+    if "squarespace-cdn.com" in body_lower or "static1.squarespace.com" in body_lower:
+        platform = "squarespace" if platform == "unknown" else platform
+        signals.append("squarespace fingerprint")
+    if ".webflow.io" in final_url or "assets.website-files.com" in body_lower:
+        platform = "webflow" if platform == "unknown" else platform
+        signals.append("webflow fingerprint")
+    if "/wp-content/" in body_lower or "/wp-includes/" in body_lower:
+        platform = "wordpress" if platform == "unknown" else platform
+        signals.append("wp-content paths")
+    # GoHighLevel-hosted funnels render through msgsndr.com iframes / assets.
+    if "msgsndr.com" in body_lower or "leadconnectorhq.com" in body_lower or "gohighlevel" in body_lower:
+        platform = "ghl_hosted" if platform == "unknown" else platform
+        signals.append("ghl/leadconnector fingerprint")
+
+    # --- Header signals ------------------------------------------------------
+    powered_by = headers_lower.get("x-powered-by", "")
+    if powered_by:
+        signals.append(f"x-powered-by: {powered_by[:80]}")
+        if "wordpress" in powered_by and platform == "unknown":
+            platform = "wordpress"
+
+    server = headers_lower.get("server", "")
+    if server:
+        signals.append(f"server: {server[:80]}")
+
+    # --- Host provider guess -------------------------------------------------
+    host_provider_guess = "unknown"
+    # Hostinger VPS IPs the WCAS platform uses (from memory: garcia-vps / ap-vps).
+    hostinger_ip_prefixes = ("93.127.", "31.97.", "147.93.")
+    cf_headers = headers_lower.get("cf-ray") or headers_lower.get("cf-cache-status")
+    if cf_headers:
+        host_provider_guess = "cloudflare_proxied"
+        signals.append(f"cloudflare: {cf_headers[:40]}")
+
+    # Try to read the resolved IP via httpx's extensions (not always populated).
+    network_stream = resp.extensions.get("network_stream") if hasattr(resp, "extensions") else None
+    peer_ip = ""
+    try:
+        if network_stream is not None:
+            info = network_stream.get_extra_info("server_addr")
+            if info:
+                peer_ip = str(info[0])
+    except (AttributeError, TypeError, KeyError, IndexError):
+        peer_ip = ""
+    if not peer_ip:
+        # Fallback: try a direct DNS lookup. Best-effort; ignore failures.
+        try:
+            import socket as _socket
+            from urllib.parse import urlparse as _urlparse
+            parsed_host = _urlparse(final_url).hostname or ""
+            if parsed_host:
+                peer_ip = _socket.gethostbyname(parsed_host)
+        except (OSError, ValueError):
+            peer_ip = ""
+    if peer_ip:
+        signals.append(f"ip: {peer_ip}")
+        if any(peer_ip.startswith(p) for p in hostinger_ip_prefixes):
+            host_provider_guess = "hostinger"
+        elif peer_ip.startswith("184.168.") or peer_ip.startswith("97.74."):
+            host_provider_guess = "godaddy"
+        elif peer_ip.startswith(("104.21.", "172.67.", "104.16.")):
+            host_provider_guess = "cloudflare_proxied"
+
+    # Shopify / Wix / Squarespace / Webflow are their own "host" too.
+    if host_provider_guess == "unknown" and platform in ("shopify", "wix", "squarespace", "webflow"):
+        host_provider_guess = platform
+
+    # --- Takeover feasibility -----------------------------------------------
+    # WCAS can take over static + WP sites (we host on Hostinger). Managed
+    # SaaS platforms (Shopify/Wix/Squarespace) we respect - we don't try to
+    # migrate their storefronts.
+    takeover_feasible = platform in ("wordpress", "static", "ghost", "unknown")
+
+    # If we couldn't name a platform but also couldn't detect fingerprints,
+    # default to "static" (plain HTML) so takeover-feasible defaults honestly.
+    if platform == "unknown" and not signals:
+        platform = "static"
+        signals.append("no platform fingerprints found; assuming static HTML")
+        takeover_feasible = True
+
+    notes = []
+    if platform == "unknown":
+        notes.append("Platform is ambiguous; ask the owner what tool they built the site in.")
+    if host_provider_guess == "hostinger":
+        notes.append("Site is already on WCAS infrastructure - we own the hosting.")
+    if platform in ("shopify", "wix", "squarespace"):
+        notes.append(
+            f"Site is on {platform}. We won't move it, but we can install our chat widget + push SEO."
+        )
+
+    return {
+        "url": final_url,
+        "platform": platform,
+        "signals": signals[:8], # cap the noise the agent sees
+        "host_provider_guess": host_provider_guess,
+        "takeover_feasible": takeover_feasible,
+        "notes": " ".join(notes) if notes else "",
+    }
 
 
 def _confirm_company_facts(tenant_id: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -151,6 +351,109 @@ def _write_kb_entry(tenant_id: str, args: dict[str, Any]) -> dict[str, Any]:
     except tenant_kb.KbError as exc:
         raise ToolError(str(exc)) from exc
     return {"status": "saved", "section": section}
+
+
+_STRATEGIES = frozenset({"connect_existing", "wcas_provisions", "owner_signup"})
+_CRED_METHODS = frozenset({"oauth", "api_key_paste", "screenshot", "concierge"})
+
+
+def _record_provisioning_plan(tenant_id: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Capture the agent's per-pipeline setup strategy for this tenant.
+
+    Writes two artifacts:
+      1. kb/provisioning_plan.md - markdown for humans (Sam's concierge handoff)
+      2. state_snapshot/provisioning_plan.json - structured JSON so the UI
+         can paint per-ring strategy chips and the dashboard can render the
+         handoff table post-activation.
+
+    Overwrites on each call; the agent is instructed to call this tool
+    exactly once per session.
+    """
+    items = args.get("items")
+    if not isinstance(items, list) or not items:
+        raise ToolError("items must be a non-empty array")
+
+    cleaned: list[dict[str, Any]] = []
+    for raw in items:
+        if not isinstance(raw, dict):
+            raise ToolError("each item must be an object")
+        service = (raw.get("service") or "").strip()
+        strategy = (raw.get("strategy") or "").strip()
+        method = (raw.get("credential_method") or "").strip()
+        if not service:
+            raise ToolError("each item needs a service slug")
+        if strategy not in _STRATEGIES:
+            raise ToolError(
+                f"strategy must be one of {sorted(_STRATEGIES)}, got {strategy!r}"
+            )
+        if method and method not in _CRED_METHODS:
+            raise ToolError(
+                f"credential_method must be one of {sorted(_CRED_METHODS)}, got {method!r}"
+            )
+        cleaned.append({
+            "service": service,
+            "strategy": strategy,
+            "credential_method": method or "concierge",
+            "owner_task": (raw.get("owner_task") or "").strip()[:400],
+            "sam_task": (raw.get("sam_task") or "").strip()[:400],
+        })
+
+    # --- Human-readable markdown for Sam's handoff ---------------------------
+    strategy_labels = {
+        "connect_existing": "Connect to their existing account",
+        "wcas_provisions": "WCAS provisions fresh",
+        "owner_signup": "Owner signs up with WCAS walking them through",
+    }
+    method_labels = {
+        "oauth": "OAuth click",
+        "api_key_paste": "Paste API key",
+        "screenshot": "Screenshot-guided",
+        "concierge": "Sam concierge",
+    }
+    lines: list[str] = [
+        "Per-pipeline strategy captured during activation intake. Each row is",
+        "the agent's best plan based on the owner's answers + the site probe.",
+        "",
+        "| Pipeline | Strategy | How | Owner task | Sam task |",
+        "|---|---|---|---|---|",
+    ]
+    for item in cleaned:
+        row = (
+            f"| {item['service']} "
+            f"| {strategy_labels.get(item['strategy'], item['strategy'])} "
+            f"| {method_labels.get(item['credential_method'], item['credential_method'])} "
+            f"| {(item['owner_task'] or ' - ').replace('|', '\\|')} "
+            f"| {(item['sam_task'] or ' - ').replace('|', '\\|')} |"
+        )
+        lines.append(row)
+
+    try:
+        tenant_kb.write_section(tenant_id, "provisioning_plan", "\n".join(lines))
+    except tenant_kb.KbError as exc:
+        raise ToolError(str(exc)) from exc
+
+    # --- Structured JSON for the UI + future /admin view --------------------
+    try:
+        import json as _json
+        root = heartbeat_store.tenant_root(tenant_id) / "state_snapshot"
+        root.mkdir(parents=True, exist_ok=True)
+        path = root / "provisioning_plan.json"
+        payload = {
+            "tenant_id": tenant_id,
+            "updated_at": _now_iso(),
+            "items": cleaned,
+        }
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(_json.dumps(payload, indent=2), encoding="utf-8")
+        tmp.replace(path)
+    except (OSError, heartbeat_store.HeartbeatError) as exc:
+        raise ToolError(f"could not persist provisioning plan JSON: {exc}") from exc
+
+    return {
+        "status": "saved",
+        "item_count": len(cleaned),
+        "json_path": f"state_snapshot/provisioning_plan.json",
+    }
 
 
 def _request_credential(tenant_id: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -311,7 +614,7 @@ def _create_ga4_property(tenant_id: str, args: dict[str, Any]) -> dict[str, Any]
                 "and create an account first, then re-run this tool."
             ),
         }
-    account_resource = summaries[0].get("account", "")  # e.g. "accounts/12345"
+    account_resource = summaries[0].get("account", "") # e.g. "accounts/12345"
     if not account_resource:
         raise ToolError("account summary missing resource name")
 
@@ -330,7 +633,7 @@ def _create_ga4_property(tenant_id: str, args: dict[str, Any]) -> dict[str, Any]
     )
     if status not in (200, 201):
         raise ToolError(f"create property failed: HTTP {status} body={body}")
-    property_resource = body.get("name", "")  # "properties/12345"
+    property_resource = body.get("name", "") # "properties/12345"
     if not property_resource:
         raise ToolError("create property response missing resource name")
 
@@ -471,19 +774,19 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         {
             "type": "object",
             "properties": {
-                "name":          {"type": "string", "description": "Legal or trade name."},
-                "website":       {"type": "string"},
-                "phone":         {"type": "string"},
-                "address":       {"type": "string", "description": "Street address (one line)."},
-                "city":          {"type": "string"},
-                "state":         {"type": "string"},
-                "postal_code":   {"type": "string"},
-                "country":       {"type": "string"},
-                "timezone":      {"type": "string", "description": "IANA tz, e.g. America/Los_Angeles."},
-                "hours":         {"type": "string", "description": "Human-readable hours summary."},
+                "name": {"type": "string", "description": "Legal or trade name."},
+                "website": {"type": "string"},
+                "phone": {"type": "string"},
+                "address": {"type": "string", "description": "Street address (one line)."},
+                "city": {"type": "string"},
+                "state": {"type": "string"},
+                "postal_code": {"type": "string"},
+                "country": {"type": "string"},
+                "timezone": {"type": "string", "description": "IANA tz, e.g. America/Los_Angeles."},
+                "hours": {"type": "string", "description": "Human-readable hours summary."},
                 "primary_email": {"type": "string"},
-                "categories":    {"type": "array", "items": {"type": "string"}},
-                "notes":         {"type": "string", "description": "Free-form context, one paragraph."},
+                "categories": {"type": "array", "items": {"type": "string"}},
+                "notes": {"type": "string", "description": "Free-form context, one paragraph."},
             },
             "required": ["name"],
         },
@@ -496,7 +799,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {
                 "role_slug": {"type": "string", "description": "e.g. gbp, seo, reviews, sales_pipeline, patrol."},
-                "step":      {"type": "string", "enum": ["credentials", "config", "connected", "first_run"]},
+                "step": {"type": "string", "enum": ["credentials", "config", "connected", "first_run"]},
             },
             "required": ["role_slug", "step"],
         },
@@ -510,7 +813,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {
                 "service": {"type": "string", "description": "google | meta | ghl | qbo | twilio | connecteam"},
-                "method":  {"type": "string", "enum": ["oauth", "api_key_paste", "screenshot"], "default": "oauth"},
+                "method": {"type": "string", "enum": ["oauth", "api_key_paste", "screenshot"], "default": "oauth"},
             },
             "required": ["service"],
         },
@@ -523,7 +826,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {
                 "role_slug": {"type": "string"},
-                "schedule":  {"type": "string", "description": "Cron or natural-language schedule."},
+                "schedule": {"type": "string", "description": "Cron or natural-language schedule."},
             },
             "required": ["role_slug", "schedule"],
         },
@@ -535,7 +838,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         {
             "type": "object",
             "properties": {
-                "key":   {"type": "string"},
+                "key": {"type": "string"},
                 "value": {"type": ["string", "boolean", "number"]},
             },
             "required": ["key", "value"],
@@ -570,9 +873,9 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                     "items": {
                         "type": "object",
                         "properties": {
-                            "title":     {"type": "string"},
-                            "metric":    {"type": "string", "enum": ["leads", "reviews", "calls", "revenue", "other"]},
-                            "target":    {"type": "number"},
+                            "title": {"type": "string"},
+                            "metric": {"type": "string", "enum": ["leads", "reviews", "calls", "revenue", "other"]},
+                            "target": {"type": "number"},
                             "timeframe": {"type": "string", "description": "e.g. '90 days', 'this quarter'."},
                         },
                         "required": ["title", "metric", "target"],
@@ -586,14 +889,18 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     _custom(
         "write_kb_entry",
         "Write free-form markdown into a named KB section. Sections are strictly "
-        "whitelisted: company, services, voice, policies, pricing, faq, known_contacts. "
-        "Use this for sections other than 'company' (which has its own structured tool).",
+        "whitelisted. Use this for every section other than 'company' (which has "
+        "its own structured tool) and 'provisioning_plan' (use record_provisioning_plan "
+        "for that).",
         {
             "type": "object",
             "properties": {
                 "section": {
                     "type": "string",
-                    "enum": ["services", "voice", "policies", "pricing", "faq", "known_contacts"],
+                    "enum": [
+                        "services", "voice", "policies", "pricing",
+                        "faq", "known_contacts", "existing_stack",
+                    ],
                 },
                 "content": {"type": "string", "description": "Markdown body. Will be atomically persisted."},
             },
@@ -635,7 +942,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {
                 "business_name": {"type": "string"},
-                "city":          {"type": "string"},
+                "city": {"type": "string"},
             },
             "required": ["business_name"],
         },
@@ -649,9 +956,9 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {
                 "display_name": {"type": "string", "description": "Property display name."},
-                "website_url":  {"type": "string"},
-                "timezone":     {"type": "string"},
-                "industry":     {"type": "string", "description": "IAB-style category string."},
+                "website_url": {"type": "string"},
+                "timezone": {"type": "string"},
+                "industry": {"type": "string", "description": "IAB-style category string."},
             },
             "required": ["display_name", "website_url", "timezone"],
         },
@@ -659,8 +966,10 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     _custom(
         "verify_gsc_domain",
         "Add the tenant's site to Google Search Console and verify ownership via a "
-        "DNS TXT record (WCAS manages DNS on Hostinger). Requires webmasters scope. "
-        "[Not yet wired - ships with the tier-2 creation round.]",
+        "DNS TXT record. The tool adds the site + surfaces the TXT record spec the "
+        "owner needs to add at their DNS provider (Hostinger / GoDaddy / Cloudflare / "
+        "whoever). Works for any host - we don't automate the DNS write itself. "
+        "Requires webmasters scope.",
         {
             "type": "object",
             "properties": {
@@ -669,26 +978,83 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             "required": ["site_url"],
         },
     ),
+
+    # ---- §4 Discovery + §5 provisioning plan --------------------------------
+    _custom(
+        "detect_website_platform",
+        "Classify the client's website by platform (WordPress / Shopify / Wix / "
+        "Squarespace / Webflow / GHL-hosted / static / unknown) + guess the host "
+        "provider (Hostinger / GoDaddy / Cloudflare-proxied / unknown). Use this "
+        "immediately after fetch_site_facts on turn 1 so the agent can pivot the "
+        "conversation based on what it actually found (e.g. 'Hostinger, already "
+        "yours' vs 'Shopify, we won't host but we can install the chat widget'). "
+        "Call ONCE per session.",
+        {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "Homepage URL the owner gave you."},
+            },
+            "required": ["url"],
+        },
+    ),
+    _custom(
+        "record_provisioning_plan",
+        "Capture the per-pipeline setup strategy after discovery. For each of the "
+        "7 pipelines (gbp, seo, reviews, email_assistant, chat_widget, blog, social), "
+        "record: strategy ('connect_existing' / 'wcas_provisions' / 'owner_signup'), "
+        "credential_method ('oauth' / 'api_key_paste' / 'screenshot' / 'concierge'), "
+        "owner_task (one sentence), sam_task (one sentence for the concierge handoff). "
+        "Writes both a markdown handoff doc for Sam AND structured JSON the UI uses "
+        "for per-ring strategy chips. Call ONCE per session.",
+        {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "service": {"type": "string"},
+                            "strategy": {
+                                "type": "string",
+                                "enum": ["connect_existing", "wcas_provisions", "owner_signup"],
+                            },
+                            "credential_method": {
+                                "type": "string",
+                                "enum": ["oauth", "api_key_paste", "screenshot", "concierge"],
+                            },
+                            "owner_task": {"type": "string"},
+                            "sam_task": {"type": "string"},
+                        },
+                        "required": ["service", "strategy"],
+                    },
+                },
+            },
+            "required": ["items"],
+        },
+    ),
 ]
 
 
 HANDLERS: dict[str, Callable[[str, dict[str, Any]], dict[str, Any]]] = {
     # Fully implemented
-    "fetch_site_facts":        _fetch_site_facts,
-    "confirm_company_facts":   _confirm_company_facts,
-    "write_kb_entry":          _write_kb_entry,
-    "request_credential":      _request_credential,
-    "activate_pipeline":       _activate_pipeline,
-    "capture_baseline":        _capture_baseline,
+    "fetch_site_facts": _fetch_site_facts,
+    "detect_website_platform": _detect_website_platform,
+    "confirm_company_facts": _confirm_company_facts,
+    "write_kb_entry": _write_kb_entry,
+    "record_provisioning_plan": _record_provisioning_plan,
+    "request_credential": _request_credential,
+    "activate_pipeline": _activate_pipeline,
+    "capture_baseline": _capture_baseline,
     "mark_activation_complete": _mark_activation_complete,
-    "create_ga4_property":     _create_ga4_property,
-    "verify_gsc_domain":       _verify_gsc_domain,
+    "create_ga4_property": _create_ga4_property,
+    "verify_gsc_domain": _verify_gsc_domain,
     # Stubs (ship next session)
-    "set_schedule":            _stub("set_schedule"),
-    "set_preference":          _stub("set_preference"),
-    "set_timezone":            _stub("set_timezone"),
-    "set_goals":               _stub("set_goals"),
-    "lookup_gbp_public":       _stub("lookup_gbp_public"),
+    "set_schedule": _stub("set_schedule"),
+    "set_preference": _stub("set_preference"),
+    "set_timezone": _stub("set_timezone"),
+    "set_goals": _stub("set_goals"),
+    "lookup_gbp_public": _stub("lookup_gbp_public"),
 }
 
 
@@ -698,18 +1064,103 @@ def dispatch(tenant_id: str, tool_name: str, args: dict[str, Any]) -> tuple[bool
     When the handler raises ToolError, ok=False + payload has {error: ...}.
     Every other exception is logged + collapsed into ok=False so a single
     handler bug never kills the agent session.
+
+    §0 Gates applied before handler runs:
+      - Provisioning tools (PROVISIONING_TOOLS) require the tenant's
+        Onboarding Approved Airtable flag to be true. Unapproved tenants
+        get a deterministic error that the agent can narrate.
+      - Every run records an audit-log line (best-effort).
+      - Provisioning + mark_activation_complete fire a Sam-alert email
+        (rate-limited per event-type).
     """
     handler = HANDLERS.get(tool_name)
     if handler is None:
+        audit_log.record(
+            tenant_id=tenant_id,
+            event="tool_unknown",
+            ok=False,
+            tool=tool_name,
+        )
         return False, {"error": f"unknown tool {tool_name!r}"}
+
+    # Provisioning gate (§0e).
+    if tool_name in PROVISIONING_TOOLS:
+        if not clients_repo.is_onboarding_approved_by_tenant(tenant_id):
+            audit_log.record(
+                tenant_id=tenant_id,
+                event="tool_denied_not_approved",
+                ok=False,
+                tool=tool_name,
+                args=args or {},
+            )
+            return False, {
+                "error": "onboarding_not_approved",
+                "tool": tool_name,
+                "hint": (
+                    "This tenant hasn't been approved to run provisioning tools yet. "
+                    "Contact Sam before continuing."
+                ),
+            }
+
     try:
         result = handler(tenant_id, args or {})
     except ToolError as exc:
+        audit_log.record(
+            tenant_id=tenant_id,
+            event="tool_call",
+            ok=False,
+            tool=tool_name,
+            args=args or {},
+            error=str(exc),
+        )
         return False, {"error": str(exc), "tool": tool_name}
-    except Exception as exc:  # defensive: keep the agent session alive
+    except Exception as exc: # defensive: keep the agent session alive
         log.exception("tool %s raised unexpectedly tenant=%s", tool_name, tenant_id)
+        audit_log.record(
+            tenant_id=tenant_id,
+            event="tool_call",
+            ok=False,
+            tool=tool_name,
+            args=args or {},
+            error=f"internal: {exc.__class__.__name__}",
+        )
         return False, {
             "error": f"internal error: {exc.__class__.__name__}",
             "tool": tool_name,
         }
+
+    audit_log.record(
+        tenant_id=tenant_id,
+        event="tool_call",
+        ok=True,
+        tool=tool_name,
+        args=args or {},
+        result_status=(result.get("status") if isinstance(result, dict) else None),
+    )
+
+    # Sam alerting (§0g). force=True on mark_activation_complete because
+    # Sam always wants to know when a tenant finishes; dedupe otherwise.
+    if tool_name in _TOOLS_THAT_ALERT_SAM:
+        email_sender.alert_sam(
+            tenant_id=tenant_id,
+            event_type=tool_name,
+            subject=f"[WCAS] {tenant_id}: {tool_name}",
+            body=(
+                f"Activation tool fired.\n\n"
+                f"Tenant: {tenant_id}\n"
+                f"Tool: {tool_name}\n"
+                f"Status: {(result or {}).get('status', 'ok') if isinstance(result, dict) else 'ok'}\n"
+            ),
+            force=(tool_name == "mark_activation_complete"),
+        )
+
+    # §0h Complete-lock: stamp Airtable when the wizard declares completion.
+    if tool_name == "mark_activation_complete":
+        try:
+            record = clients_repo.find_by_tenant_id(tenant_id)
+            if record is not None:
+                clients_repo.mark_onboarding_completed(record["id"])
+        except (RuntimeError, KeyError):
+            log.warning("mark_onboarding_completed write-back failed tenant=%s", tenant_id)
+
     return True, result

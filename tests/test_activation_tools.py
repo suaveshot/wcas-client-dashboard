@@ -23,6 +23,11 @@ from dashboard_app.services import (
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path, monkeypatch):
     monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    # Bypass the onboarding-approval gate so provisioning-tool tests can
+    # exercise the real handlers. Safety clause in clients_repo refuses
+    # the bypass when COOKIE_DOMAIN points at the public prod domain.
+    monkeypatch.setenv("DISABLE_ONBOARDING_APPROVAL_GATE", "1")
+    monkeypatch.delenv("COOKIE_DOMAIN", raising=False)
     credentials.clear_access_token_cache()
     yield
     credentials.clear_access_token_cache()
@@ -116,6 +121,113 @@ def test_confirm_company_facts_rejects_missing_name():
     ok, payload = activation_tools.dispatch("acme", "confirm_company_facts", {"website": "https://x.com"})
     assert ok is False
     assert "name is required" in payload["error"]
+
+
+def test_detect_website_platform_wordpress_via_generator(monkeypatch):
+    """Generator meta tag reveals WordPress cleanly."""
+    class FakeResponse:
+        status_code = 200
+        text = '<html><head><meta name="generator" content="WordPress 6.4"></head></html>'
+        headers = {}
+        url = "https://acmehvac.com/"
+        extensions = {}
+    monkeypatch.setattr(activation_tools, "_httpx_get", lambda url, timeout=10.0: FakeResponse())
+    ok, payload = activation_tools.dispatch("acme", "detect_website_platform", {"url": "https://acmehvac.com"})
+    assert ok is True
+    assert payload["platform"] == "wordpress"
+    assert payload["takeover_feasible"] is True
+    assert any("wordpress" in s.lower() for s in payload["signals"])
+
+
+def test_detect_website_platform_shopify_via_cdn(monkeypatch):
+    class FakeResponse:
+        status_code = 200
+        text = '<html><body><script src="https://cdn.shopify.com/foo.js"></script></body></html>'
+        headers = {}
+        url = "https://garciafolklorico.com/"
+        extensions = {}
+    monkeypatch.setattr(activation_tools, "_httpx_get", lambda url, timeout=10.0: FakeResponse())
+    ok, payload = activation_tools.dispatch("acme", "detect_website_platform", {"url": "garciafolklorico.com"})
+    assert ok is True
+    assert payload["platform"] == "shopify"
+    # Shopify is a managed platform we don't try to migrate off of.
+    assert payload["takeover_feasible"] is False
+
+
+def test_detect_website_platform_rejects_blank_url():
+    ok, payload = activation_tools.dispatch("acme", "detect_website_platform", {"url": ""})
+    assert ok is False
+    assert "url is required" in payload["error"]
+
+
+def test_detect_website_platform_falls_back_to_static(monkeypatch):
+    """Plain HTML with zero fingerprints should default to static + takeover_feasible."""
+    class FakeResponse:
+        status_code = 200
+        text = "<html><body><h1>Hi</h1></body></html>"
+        headers = {}
+        url = "https://tiny.example/"
+        extensions = {}
+    monkeypatch.setattr(activation_tools, "_httpx_get", lambda url, timeout=10.0: FakeResponse())
+    ok, payload = activation_tools.dispatch("acme", "detect_website_platform", {"url": "tiny.example"})
+    assert ok is True
+    assert payload["platform"] == "static"
+    assert payload["takeover_feasible"] is True
+
+
+def test_record_provisioning_plan_writes_markdown_and_json(tmp_path, monkeypatch):
+    import json
+    from dashboard_app.services import tenant_kb
+    ok, payload = activation_tools.dispatch("acme", "record_provisioning_plan", {
+        "items": [
+            {"service": "gbp", "strategy": "connect_existing", "credential_method": "oauth",
+             "owner_task": "Approve Google consent", "sam_task": "Run Week-1 check-in"},
+            {"service": "social", "strategy": "owner_signup", "credential_method": "screenshot",
+             "owner_task": "Create FB Business Page", "sam_task": "Walk owner through Meta setup"},
+        ],
+    })
+    assert ok is True
+    assert payload["status"] == "saved"
+    assert payload["item_count"] == 2
+
+    md = tenant_kb.read_section("acme", "provisioning_plan")
+    assert md is not None
+    assert "gbp" in md and "Connect to their existing account" in md
+    # Matches "Owner signs up with WCAS walking them through" row label.
+    assert "signs up" in md.lower()
+
+    json_path = tmp_path / "acme" / "state_snapshot" / "provisioning_plan.json"
+    assert json_path.exists()
+    data = json.loads(json_path.read_text(encoding="utf-8"))
+    assert data["tenant_id"] == "acme"
+    assert len(data["items"]) == 2
+    assert data["items"][0]["service"] == "gbp"
+
+
+def test_record_provisioning_plan_rejects_invalid_strategy():
+    ok, payload = activation_tools.dispatch("acme", "record_provisioning_plan", {
+        "items": [{"service": "gbp", "strategy": "invalid_one"}],
+    })
+    assert ok is False
+    assert "strategy must be one of" in payload["error"]
+
+
+def test_record_provisioning_plan_requires_non_empty_items():
+    ok, payload = activation_tools.dispatch("acme", "record_provisioning_plan", {"items": []})
+    assert ok is False
+    assert "non-empty array" in payload["error"]
+
+
+def test_dispatch_audits_tool_calls(tmp_path, monkeypatch):
+    """Every dispatch invocation should append a JSONL line to the audit log."""
+    import json as _json
+    from dashboard_app.services import audit_log
+
+    activation_tools.dispatch("acme", "activate_pipeline", {"role_slug": "gbp", "step": "credentials"})
+    log_path = tmp_path / "acme" / "audit" / "activation.log"
+    assert log_path.exists()
+    lines = [_json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert any(entry.get("tool") == "activate_pipeline" and entry.get("ok") is True for entry in lines)
 
 
 def test_confirm_company_facts_ignores_empty_optional_fields():

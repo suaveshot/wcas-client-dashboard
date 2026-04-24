@@ -61,16 +61,19 @@ def test_activate_renders_wizard_for_authed_tenant(tmp_path, monkeypatch):
     from dashboard_app.services import sessions
 
     monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
-    cookie = sessions.issue(tenant_id="acme", email="owner@acme.com", role="client")
+    # /activate now runs a TOS gate + completion-lock. Admin role bypasses
+    # both so the render test can assert raw template content.
+    cookie = sessions.issue(tenant_id="acme", email="owner@acme.com", role="admin")
     authed = TestClient(app)
     authed.cookies.set("wcas_session", cookie)
     r = authed.get("/activate")
     assert r.status_code == 200
     # Locked first-message copy from okay-larry-so-flickering-lollipop.md
     assert "Welcome in" in r.text
-    assert "14 roles" in r.text
-    # Connect button present when no google credential stored yet.
-    assert "/auth/oauth/google/start" in r.text
+    # Roster is now 7 tenant-generic automations (was 14 / then 9 earlier).
+    assert "7 automations" in r.text
+    # Connect button routes through the scope-preview screen first (§0.5).
+    assert "/auth/oauth/google/preview" in r.text
     # No vendor names leaked into rendered HTML.
     for banned in ("Claude", "Opus", "Anthropic", "OpenAI", "GPT"):
         assert banned not in r.text, f"{banned!r} leaked into /activate"

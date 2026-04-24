@@ -866,3 +866,76 @@ The Day 4 smoke never sent `user.custom_tool_result` back (it only counted tool 
 - `_post_filter_text` contains the literal em-dash char it's trying to replace, which naturally tripped the no-em-dashes-in-source smoke test. Fixed by using `chr(0x2014)` / `chr(0x2013)` constants.
 - The judge demo tenant flow is exactly the same as the real activate flow; `DEMO_MODE=true` is the only switch that changes rendered output. Simpler than I expected.
 
+
+
+---
+
+# Entry 15 - 2026-04-24 evening (Day 5 late afternoon)
+
+**Status:** 0.5.0 ready to deploy. 292 tests passing (was 280 at Day-5 midday). Onboarding expansion landed.
+
+## What shipped
+
+Scope pivot: Garcia Folklorico Studio is the real-client demo persona (Sam doesn't have GHL admin access, so GHL + sales_pipeline dropped for now). Roster goes from 9 slots to 7 tenant-generic automations: gbp, seo, reviews, email_assistant, chat_widget, blog, social.
+
+Sections built (plan lives at `C:\Users\bball\.claude\plans\okay-larry-we-purrfect-pine.md`):
+
+- **§0 Onboarding authorization gate** - Airtable row's Onboarding Approved checkbox gates magic-link send AND provisioning-tool dispatch. Completion-lock redirects finished tenants to a branded "closed" page so the wizard can't be re-run. Audit log at `/opt/wc-solns/<tenant>/audit/activation.log` (append-only JSONL). Sam-alert email on first sign-in + every provisioning tool fire + mark_activation_complete, rate-limited 5 min per event-type.
+- **§0.5 Legal basics** - TOS acceptance redirect from /activate to /activate/terms if the tenant hasn't clicked through CURRENT_TOS_VERSION. Plain-English scope-transparency screen in front of every OAuth start URL. `/legal/terms` + `/legal/privacy` placeholders (Sam's lawyer replaces). Click-through logs version + timestamp + IP + UA to Airtable.
+- **§1 Brand rebrand** - Every user-facing "salarcon@americalpatrol.com" reference now reads "sam@westcoastautomationsolutions.com".
+- **§2 Roster change** - 9 slots -> 7 in `services/roster.py`; CSS grid goes 3-col -> 4-col desktop.
+- **§3 KB sections** - Added `existing_stack` + `provisioning_plan` to the whitelist.
+- **§4 detect_website_platform tool** - WordPress / Shopify / Wix / Squarespace / Webflow / GHL-hosted / static fingerprinting. Host-provider guess via IP range (Hostinger / GoDaddy / Cloudflare). `takeover_feasible` flag lights up for static + WordPress; stays off for managed SaaS.
+- **§5 record_provisioning_plan tool** - Captures per-pipeline strategy (connect_existing / wcas_provisions / owner_signup) + credential_method + owner_task + sam_task. Writes both markdown handoff to KB AND structured JSON the UI uses for ring strategy chips.
+- **§7 Sample-output generator** - `services/sample_outputs.py` + `api/activation_samples.py`. After mark_activation_complete fires, UI hits `/api/activation/generate-samples` which runs 7 cached Opus calls (one per pipeline, KB prompt-cached), writes results to `/opt/wc-solns/<tenant>/samples/<slug>.json`, UI polls `/api/activation/samples` and renders cards. This is the "does it actually work" moment for the demo.
+- **§7.5 Screenshot ingestion** - Camera button on the composer, multipart upload to `/api/activation/screenshot`, server-generated filename saved to `/opt/wc-solns/<tenant>/activation_screenshots/`. Chat request body carries the filenames; handler calls `screenshot_vision.describe_path` per file (multimodal Opus) and prepends the descriptions to the text message before the Managed Agent run_turn. Works around the text-only managed-agents-2026-04-01 beta.
+- **§8 System prompt rewrite** - New 6-turn structure: fetch+classify -> confirm + capture existing stack -> fill KB + record provisioning plan -> Google OAuth connects 4 rings -> Meta OAuth or owner_signup for social + light up chat_widget/blog -> mark complete + trigger sample generation. Dropped refs to sales_pipeline / ads / qbr / GHL. Added screenshot-context fallback instructions.
+- **§9 UI** - 7-slot ring grid with strategy-chip slots, hidden samples panel that appears on mark_complete, camera button + attachments chips in the composer, Connect-Google button routes through `/auth/oauth/google/preview` first.
+- **§10 Garcia demo seed** - `scripts/seed_garcia_onboarding.py` with `--dry-run` + `--create-row` flags. Resets the chat + KB + samples + provisioning plan for the recording. Does NOT touch the live Garcia site.
+
+Cut from hackathon (documented in plan): Meta OAuth (strategy flips to owner_signup), hard per-tenant cost caps (the advisory `cost_tracker.should_allow` stays), extensive screenshot ingestion tests + soft-delete cron, real GHL integration of any kind.
+
+## Files of note
+
+- `services/audit_log.py` (NEW) - never-raises append-only JSONL
+- `services/scope_transparency.py` (NEW) - scope -> plain-English mapping
+- `services/sample_outputs.py` (NEW) - 7 per-pipeline prompt templates
+- `services/screenshot_vision.py` (NEW) - multimodal Opus describe
+- `api/activation_terms.py` (NEW) - POST /api/activation/accept-terms
+- `api/activation_samples.py` (NEW) - POST generate + GET cached samples + provisioning plan
+- `api/activation_screenshot.py` (NEW) - POST /api/activation/screenshot
+- `templates/activate/terms.html` + `scope_preview.html` (NEW)
+- `templates/legal/terms.html` + `privacy.html` (NEW; Sam replaces copy)
+- `templates/onboarding_closed.html` (NEW)
+- `services/activation_tools.py` - new dispatch gate, 2 new tools, audit-log calls, Sam alerts, mark_complete Airtable write-back
+- `services/clients_repo.py` - `is_onboarding_approved[_by_tenant]`, `find_by_tenant_id`, `onboarding_completed_at`, `mark_onboarding_completed`, `record_tos_acceptance`, `has_accepted_tos_version`, `CURRENT_TOS_VERSION`
+- `agents/activation_agent.py` - SYSTEM_PROMPT rewrite for the 6-turn Garcia flow
+- `services/roster.py` - 9 -> 7 slugs
+- `services/tenant_kb.py` - 2 new sections
+- `services/email_sender.py` - `alert_sam` + dedupe
+- `services/rate_limit.py` - `activation_samples_limiter`
+
+## Saturday deploy plan
+
+1. Add the 6 new Airtable fields to the Clients table (Onboarding Approved / Onboarding Completed At / TOS Version Accepted / TOS Accepted At / TOS Accepted IP / TOS Accepted UA). Tick Onboarding Approved + clear Completed At on AP, Garcia, and Sam's test rows.
+2. Run `python -m scripts.seed_garcia_onboarding --email <Itzel's email> --dry-run` first, then without --dry-run once it looks right.
+3. Commit + push. `ssh garcia-vps 'cd /docker/wcas-dashboard/app && git pull && cd .. && docker compose up -d --build'`.
+4. Update `/docker/wcas-dashboard/.env`: `SUPPORT_EMAIL_TO=sam@westcoastautomationsolutions.com`. Keep `DISABLE_ONBOARDING_APPROVAL_GATE` unset (prod must have the gate live).
+5. `/healthz` should return `0.5.0`. Smoke the full flow on prod with Sam's test tenant.
+6. Record video.
+
+## Open items for post-hackathon (Tier 1 from plan gaps analysis)
+
+- Stripe billing tied to activation completion (biggest exposure right now)
+- Credential rotation daemon (Meta tokens expire at 60 days silently)
+- Offboarding + data-deletion flow for CCPA/GDPR
+- Audit log off-box shipping (S3 with object lock or similar)
+- Token encryption at rest (envelope encryption)
+- Backup off-VPS (nightly rsync)
+- Lawyer-reviewed TOS + privacy policy replacing the placeholders
+
+## Surprising bits this session
+
+- Replaced em dashes with " - " across 9 new files in one bulk pass via python; the test_no_em_dashes_in_source guard catches them at pytest time which keeps the brand rule trivially enforceable.
+- The Managed Agents beta 2026-04-01 SDK is text-only, so screenshot ingestion happens as a separate direct-Messages-API describe step that prepends text context to the agent's turn. Cleaner than trying to negotiate multimodal content blocks into `user.message` events.
+- Privacy page initially tripped `test_no_llm_vendor_in_rendered_html` because of an Anthropic subprocessor disclosure. Replaced with "AI model provider" to satisfy both the brand rule and CCPA/GDPR expectations.

@@ -1,5 +1,5 @@
 """
-WCAS Client Dashboard  -  FastAPI entrypoint.
+WCAS Client Dashboard - FastAPI entrypoint.
 
 Day 2 added: magic-link auth, signed session cookie, tenant-resolving
 middleware, global exception handler, real /api/pipelines + /api/brand,
@@ -27,12 +27,15 @@ from .api import goals as goals_api
 from .api import heartbeat as heartbeat_api
 from .api import oauth as oauth_api
 from .api import outgoing as outgoing_api
+from .api import activation_samples as activation_samples_api
+from .api import activation_screenshot as activation_screenshot_api
+from .api import activation_terms as activation_terms_api
 from .api import pipelines as pipelines_api
 from .api import receipts as receipts_api
 from .api import recs as recs_api
 from .api import settings as settings_api
 from .api import tenant as tenant_api
-from .services import activation_state, activity_feed, credentials, errors, goals as goals_svc, home_context, outgoing_queue, recs_store, role_detail, roster, security_headers, seeded_recs, telemetry, tenant_ctx, tenant_prefs, validation_probe
+from .services import activation_state, activity_feed, clients_repo, credentials, errors, goals as goals_svc, home_context, outgoing_queue, recs_store, role_detail, roster, security_headers, seeded_recs, telemetry, tenant_ctx, tenant_prefs, validation_probe
 from .services.tenant_ctx import current_session, require_tenant
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -44,13 +47,14 @@ TEMPLATES_DIR = APP_DIR / "templates"
 app = FastAPI(
     title="WCAS Client Dashboard",
     description="Agency-level client activation + live automation telemetry.",
-    version="0.4.0",
+    version="0.5.0",
 )
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 auth_api.attach_templates(templates)
+oauth_api.attach_templates(templates)
 
 # Security headers middleware. Registered first so it wraps the outer
 # response - FastAPI evaluates middleware stack in reverse registration order.
@@ -65,6 +69,9 @@ app.include_router(brand_api.router)
 app.include_router(heartbeat_api.router)
 app.include_router(oauth_api.router)
 app.include_router(activation_chat_api.router)
+app.include_router(activation_terms_api.router)
+app.include_router(activation_samples_api.router)
+app.include_router(activation_screenshot_api.router)
 app.include_router(ask_api.router)
 app.include_router(ask_global_api.router)
 app.include_router(attention_api.router)
@@ -177,12 +184,53 @@ async def dev_login(tenant: str = "americal_patrol") -> RedirectResponse:
 
 
 # Ring grid roster lives in services/roster.py so main.py, api/activation_chat.py,
-# and anything else that renders the 14-ring grid share one source of truth.
+# and anything else that renders the 7-ring grid share one source of truth.
 
 
 @app.get("/activate", response_class=HTMLResponse)
-async def activate_page(request: Request, tenant_id: str = Depends(require_tenant)) -> HTMLResponse:
-    """Activation wizard: 45/55 chat-left + ring-grid-right layout."""
+async def activate_page(request: Request, tenant_id: str = Depends(require_tenant)):
+    """Activation wizard: 45/55 chat-left + ring-grid-right layout.
+
+    Two gates run before rendering, in order:
+      1. §0.5 TOS gate - redirect to /activate/terms if the tenant has not
+         clicked through the current TOS version yet.
+      2. §0 completion-lock - if the tenant's row already has
+         `Onboarding Completed At` set, redirect to a branded "onboarding
+         closed" page.
+
+    Admin sessions bypass both (Sam can always re-enter for demos).
+    Airtable lookup failures fail open so a transient hiccup doesn't block
+    a legitimate session.
+    """
+    session = current_session(request)
+    role = getattr(session, "role", "client") if session else "client"
+    client_record = None
+    if role != "admin":
+        try:
+            client_record = clients_repo.find_by_tenant_id(tenant_id)
+        except RuntimeError:
+            client_record = None
+
+        # §0.5 TOS gate.
+        if client_record is not None and not clients_repo.has_accepted_tos_version(client_record):
+            return RedirectResponse(url="/activate/terms", status_code=303)
+
+        # §0 completion-lock.
+        if client_record is not None and clients_repo.onboarding_completed_at(client_record):
+            return templates.TemplateResponse(
+                request,
+                "onboarding_closed.html",
+                {
+                    "tenant_id": tenant_id,
+                    "heading": "Onboarding is closed for this account",
+                    "message": (
+                        "Your activation wizard already finished. Everything is already "
+                        "connected and the automations are running. If you want to reconfigure "
+                        "any of them, send a note and I'll walk you through it."
+                    ),
+                },
+            )
+
     role_slugs = roster.role_slugs()
     rings_by_slug = {r["slug"]: r for r in activation_state.ring_view(tenant_id, role_slugs)}
     roster_with_state = [
@@ -228,26 +276,38 @@ async def activation_state_api(tenant_id: str = Depends(require_tenant)) -> JSON
 
 @app.get("/terms", response_class=HTMLResponse)
 async def terms(request: Request) -> HTMLResponse:
-    return templates.TemplateResponse(
-        request,
-        "placeholder.html",
-        {
-            "title": "Terms",
-            "heading": "Terms of Service",
-            "body": "Final content shipping Day 5. In plain English, owner to owner.",
-        },
-    )
+    return templates.TemplateResponse(request, "legal/terms.html", {})
 
 
 @app.get("/privacy", response_class=HTMLResponse)
 async def privacy(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(request, "legal/privacy.html", {})
+
+
+@app.get("/legal/terms", response_class=HTMLResponse)
+async def legal_terms(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(request, "legal/terms.html", {})
+
+
+@app.get("/legal/privacy", response_class=HTMLResponse)
+async def legal_privacy(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(request, "legal/privacy.html", {})
+
+
+@app.get("/activate/terms", response_class=HTMLResponse)
+async def activate_terms_page(request: Request, tenant_id: str = Depends(require_tenant)) -> HTMLResponse:
+    """Consent screen shown once per tenant before /activate renders."""
+    error_code = request.query_params.get("e", "")
+    error_msg = {
+        "stale": "That version is out of date. Accept the current terms to continue.",
+        "server": "Something went sideways saving that. Try again.",
+    }.get(error_code, None)
     return templates.TemplateResponse(
         request,
-        "placeholder.html",
+        "activate/terms.html",
         {
-            "title": "Privacy",
-            "heading": "Privacy Policy",
-            "body": "Final content shipping Day 5. What we collect, why, and how to export or delete.",
+            "tos_version": clients_repo.CURRENT_TOS_VERSION,
+            "error": error_msg,
         },
     )
 

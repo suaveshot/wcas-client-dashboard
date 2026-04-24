@@ -8,4 +8,4 @@ Tap the link below and you're in. The link works once, for the next {{ ttl_minut
 
 Didn't ask for this? Ignore the email and the link expires on its own.
 
-Questions: salarcon@americalpatrol.com
+Questions: sam@westcoastautomationsolutions.com
