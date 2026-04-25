@@ -895,25 +895,6 @@ def _verify_gsc_domain(tenant_id: str, args: dict[str, Any]) -> dict[str, Any]:
 
 
 # ============================================================================
-# Stubs (return honest 'not_yet_implemented' so the agent can keep planning)
-# ============================================================================
-
-
-def _stub(name: str) -> Callable[[str, dict[str, Any]], dict[str, Any]]:
-    def handler(tenant_id: str, args: dict[str, Any]) -> dict[str, Any]:
-        log.info("stub tool %s called tenant=%s args_keys=%s", name, tenant_id, list(args.keys()))
-        return {
-            "status": "not_yet_implemented",
-            "tool": name,
-            "hint": (
-                f"{name} is scaffolded but not wired yet. Treat the call as a no-op and "
-                f"continue the conversation. The real handler ships in a follow-up session."
-            ),
-        }
-    return handler
-
-
-# ============================================================================
 # Tool schemas (the agent's view)
 # ============================================================================
 
@@ -982,72 +963,11 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         },
     ),
     _custom(
-        "set_schedule",
-        "Set a role's run schedule (cron expression or owner-friendly string). "
-        "[Not yet wired - scaffolds the call, real handler ships next session.]",
-        {
-            "type": "object",
-            "properties": {
-                "role_slug": {"type": "string"},
-                "schedule": {"type": "string", "description": "Cron or natural-language schedule."},
-            },
-            "required": ["role_slug", "schedule"],
-        },
-    ),
-    _custom(
-        "set_preference",
-        "Persist a tenant-level preference (draft_mode, autosend, etc.). "
-        "[Not yet wired - scaffolds the call.]",
-        {
-            "type": "object",
-            "properties": {
-                "key": {"type": "string"},
-                "value": {"type": ["string", "boolean", "number"]},
-            },
-            "required": ["key", "value"],
-        },
-    ),
-    _custom(
-        "set_timezone",
-        "Persist the tenant's IANA timezone. Usually called from confirm_company_facts; "
-        "standalone handler for after-the-fact changes. [Not yet wired.]",
-        {
-            "type": "object",
-            "properties": {"timezone": {"type": "string"}},
-            "required": ["timezone"],
-        },
-    ),
-    _custom(
         "capture_baseline",
         "Run the validation probe against all connected providers and persist the "
         "result as the tenant's immutable Day-1 baseline. Reports comparing to this "
         "baseline fuel every future recommendation + QBR.",
         {"type": "object", "properties": {}},
-    ),
-    _custom(
-        "set_goals",
-        "Persist up to 3 owner-set goals with metric + target + timeframe. "
-        "[Not yet wired - scaffolds the call.]",
-        {
-            "type": "object",
-            "properties": {
-                "goals": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "title": {"type": "string"},
-                            "metric": {"type": "string", "enum": ["leads", "reviews", "calls", "revenue", "other"]},
-                            "target": {"type": "number"},
-                            "timeframe": {"type": "string", "description": "e.g. '90 days', 'this quarter'."},
-                        },
-                        "required": ["title", "metric", "target"],
-                    },
-                    "maxItems": 3,
-                }
-            },
-            "required": ["goals"],
-        },
     ),
     _custom(
         "write_kb_entry",
@@ -1094,20 +1014,6 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "url": {"type": "string", "description": "Homepage URL, e.g. https://acmehvac.com/"},
             },
             "required": ["url"],
-        },
-    ),
-    _custom(
-        "lookup_gbp_public",
-        "Search the public Google Business Profile index by business name + city. "
-        "Returns address, category, rating, and whether the listing is claimed. Useful "
-        "for cross-checking owner-provided facts. [Not yet wired.]",
-        {
-            "type": "object",
-            "properties": {
-                "business_name": {"type": "string"},
-                "city": {"type": "string"},
-            },
-            "required": ["business_name"],
         },
     ),
     _custom(
@@ -1309,12 +1215,6 @@ HANDLERS: dict[str, Callable[[str, dict[str, Any]], dict[str, Any]]] = {
     "propose_voice_card": _propose_voice_card,
     "fetch_airtable_schema": _fetch_airtable_schema,
     "propose_crm_mapping": _propose_crm_mapping,
-    # Stubs (ship next session)
-    "set_schedule": _stub("set_schedule"),
-    "set_preference": _stub("set_preference"),
-    "set_timezone": _stub("set_timezone"),
-    "set_goals": _stub("set_goals"),
-    "lookup_gbp_public": _stub("lookup_gbp_public"),
 }
 
 

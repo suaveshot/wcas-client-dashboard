@@ -49,15 +49,14 @@ def test_schemas_have_adr005_tools():
     names = {t["name"] for t in activation_tools.TOOL_SCHEMAS}
     required_adr005 = {
         "confirm_company_facts", "activate_pipeline", "request_credential",
-        "set_schedule", "set_preference", "set_timezone", "capture_baseline",
-        "set_goals", "write_kb_entry", "mark_activation_complete",
+        "capture_baseline", "write_kb_entry", "mark_activation_complete",
     }
     assert required_adr005 <= names
 
 
 def test_schemas_have_tier2_tools():
     names = {t["name"] for t in activation_tools.TOOL_SCHEMAS}
-    tier2 = {"fetch_site_facts", "lookup_gbp_public", "create_ga4_property", "verify_gsc_domain"}
+    tier2 = {"fetch_site_facts", "create_ga4_property", "verify_gsc_domain"}
     assert tier2 <= names
 
 
@@ -436,18 +435,6 @@ def test_fetch_site_facts_surfaces_network_error(monkeypatch):
     ok, payload = activation_tools.dispatch("acme", "fetch_site_facts", {"url": "https://example.com/"})
     assert ok is False
     assert "fetch failed" in payload["error"]
-
-
-# --- Stub behavior ---------------------------------------------------------
-
-
-def test_stubs_return_honest_not_yet_implemented():
-    for name in ("set_schedule", "set_preference", "set_timezone", "set_goals",
-                 "lookup_gbp_public"):
-        ok, payload = activation_tools.dispatch("acme", name, {})
-        assert ok is True, f"stub {name} returned ok=False"
-        assert payload["status"] == "not_yet_implemented", f"stub {name} has wrong status"
-        assert payload["tool"] == name
 
 
 # --- create_ga4_property ---------------------------------------------------

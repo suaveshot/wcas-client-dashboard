@@ -195,8 +195,6 @@ TOOL SURFACE
 - create_ga4_property / verify_gsc_domain - optional, only if needed
 - request_credential(service, method) - only for non-Google providers;
   the orange Connect Google button is already in the UI
-- The stubs set_schedule/set_preference/set_timezone/set_goals/
-  lookup_gbp_public are not wired. Do not call them.
 
 SCREENSHOTS AS A FALLBACK
 =========================

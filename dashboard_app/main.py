@@ -137,12 +137,12 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 def _post_login_target(sess: dict) -> str:
     """Where a just-authenticated user should land.
 
-    Admins go to /admin. Clients whose activation hasn't been marked
-    complete go to /activate (onboarding flow). Everyone else lands
-    on /dashboard.
+    Clients whose activation hasn't been marked complete go to /activate
+    (onboarding flow). Everyone else (including admins) lands on /dashboard.
+    The /admin operator view was punted post-hackathon.
     """
     if sess.get("rl") == "admin":
-        return "/admin"
+        return "/dashboard"
     tid = sess.get("tid") or ""
     if tid and not activation_state.is_complete(tid):
         return "/activate"

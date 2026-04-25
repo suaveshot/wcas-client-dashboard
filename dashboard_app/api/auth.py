@@ -200,8 +200,10 @@ async def verify_magic_link(request: Request, token: str = "") -> RedirectRespon
     cookie_value = sessions.issue(tenant_id=tenant_id, email=email, role=role)
     # First-time owners land on /activate to run the onboarding chat; returning
     # owners (activation already marked complete) go straight to /dashboard.
+    # Admins skip the activation gate (the /admin view itself was punted
+    # post-hackathon) and land on /dashboard.
     if role == "admin":
-        landing = "/admin"
+        landing = "/dashboard"
     else:
         from ..services import activation_state
         landing = "/dashboard" if activation_state.is_complete(tenant_id) else "/activate"
