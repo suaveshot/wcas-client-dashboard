@@ -71,7 +71,10 @@ _FIRST_CHILD = [
     "Olivia", "Ava", "Aria", "Daniel", "Mateo", "Diego", "Alejandro", "Santiago",
     "Sebastian", "Lucas", "Adrian", "Gabriel", "Nicolas",
 ]
-_CLASS_OPTIONS = ["Botones de Flor", "Semillas", "Hojas", "Flores", "Folklorico Avanzado"]
+# Real class options (from Airtable singleSelect schema). Adding any
+# unknown option fails with INVALID_MULTIPLE_CHOICE_OPTIONS because
+# the API token doesn't have schema-edit permission.
+_CLASS_OPTIONS = ["Semillas", "Botones de Flor", "Elementary", "Mommy & Me", "Raices"]
 
 
 def _api():
@@ -146,6 +149,8 @@ def _make(block: str, parent_first: str, parent_last: str, child: str,
         "Phone": _phone(),
         "Email": _email(parent_first, parent_last),
         "Class": rng.choice(_CLASS_OPTIONS),
+        "Status": "Registered",  # only real option that fits demo segments
+        "Language": rng.choice(["EN", "ES"]),
         "Block": block,
         "Child Age": rng.randint(4, 12),
         "Registered On": when.isoformat(),
