@@ -267,11 +267,26 @@
     }
   }
 
-  function renderPanels(panels) {
+  async function renderPanels(panels) {
     if (!Array.isArray(panels)) return;
+    const VIZ = window.AGENT_VIZ;
     for (const p of panels) {
-      if (p.type === "voice_card") appendVoiceCardBubble(p.payload);
-      else if (p.type === "crm_mapping") appendCrmMappingBubble(p.payload);
+      if (p.type === "voice_card") {
+        // Demo mode: play "reading the website + learning your voice"
+        // overlay, then drop the actual voice card bubble in as the
+        // resolution. No-op when ?demo=1 is not in the URL.
+        if (VIZ && VIZ.enabled) {
+          try { await VIZ.playVoiceExtraction(p.payload); }
+          catch (_e) { /* never let viz block the real flow */ }
+        }
+        appendVoiceCardBubble(p.payload);
+      } else if (p.type === "crm_mapping") {
+        if (VIZ && VIZ.enabled) {
+          try { await VIZ.playCrmMapping(p.payload); }
+          catch (_e) { /* never let viz block the real flow */ }
+        }
+        appendCrmMappingBubble(p.payload);
+      }
     }
   }
 
@@ -596,6 +611,18 @@
   async function runLiveSimulation(card, cta) {
     cta.disabled = true;
     cta.textContent = "Drafting...";
+
+    // Demo-mode visualizer: source-stream overlay + latency counter +
+    // typewriter email + sequenced citation badge lighting. No-op when
+    // ?demo=1 isn't in the URL (returns a passthrough that just sets text).
+    const VIZ = (window.AGENT_VIZ && window.AGENT_VIZ.createSimulationVisualizer)
+      ? window.AGENT_VIZ.createSimulationVisualizer()
+      : null;
+    if (VIZ) {
+      VIZ.attachTo(card);
+      VIZ.startCounter();
+    }
+
     try {
       const resp = await fetch("/api/activation/simulate-customer", {
         method: "POST",
@@ -609,6 +636,12 @@
       }
       if (!resp.ok) throw new Error("Generation failed.");
       const body = await resp.json();
+
+      if (VIZ) {
+        VIZ.freezeCounter();
+        VIZ.cleanupStreams();
+      }
+
       // Replace card body with the rendered draft + citations.
       while (card.firstChild) card.removeChild(card.firstChild);
       const eyebrow = el("div", "ap-activate-sample__eyebrow",
@@ -620,11 +653,25 @@
         "Drafted to " + body.name + " (" + body.days_inactive + " days inactive), in your voice.");
       card.appendChild(meta);
       const draft = el("div", "ap-activate-simulation__draft");
-      draft.textContent = body.body_markdown || "";
       card.appendChild(draft);
       renderCitations(card, body.citations || []);
       card.classList.add("is-generated");
+
+      // Demo: typewriter the body, then light the citation badges sequentially.
+      // In non-demo mode VIZ is null, draft just gets dumped at full text and
+      // citations render normally (no light sequence).
+      if (VIZ) {
+        await VIZ.typewrite(draft, body.body_markdown || "", 50);
+        const badges = card.querySelectorAll(".ap-activate-citation");
+        await VIZ.lightCitations(badges);
+      } else {
+        draft.textContent = body.body_markdown || "";
+      }
     } catch (err) {
+      if (VIZ) {
+        VIZ.freezeCounter();
+        VIZ.cleanupStreams();
+      }
       cta.disabled = false;
       cta.textContent = "Generate one now";
       const msg = el("p", "ap-activate-simulation__error", err.message || "Generation failed.");

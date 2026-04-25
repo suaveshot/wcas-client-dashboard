@@ -4604,3 +4604,382 @@ body.ap-receipts-drawer-open { overflow: hidden; }
   border-color: var(--ok);
 }
 
+/* ============================================================
+   AGENT VISUALIZATION (demo mode only, ?demo=1)
+   See dashboard_app/static/agent_viz.js
+   ============================================================ */
+
+/* ---------- Overlay base (voice + CRM share this) ---------- */
+.ap-viz-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  padding: var(--s-7) var(--s-6);
+  background: var(--bg);
+  background-image: linear-gradient(180deg, var(--bg) 0%, var(--bg-alt) 100%);
+  opacity: 0;
+  transition: opacity var(--t-base) var(--ease);
+  pointer-events: none;
+}
+.ap-viz-overlay.is-visible { opacity: 1; }
+.ap-viz-overlay.is-leaving { opacity: 0; }
+
+.ap-viz-overlay__header {
+  text-align: center;
+  margin-bottom: var(--s-5);
+}
+.ap-viz-overlay__eyebrow {
+  display: inline-block;
+  font-family: var(--font-body);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  color: var(--ink-muted);
+  text-transform: uppercase;
+  margin-bottom: var(--s-2);
+}
+.ap-viz-overlay__title {
+  font-family: var(--font-display);
+  font-size: clamp(24px, 3vw, 32px);
+  color: var(--ink);
+  margin: 0;
+}
+.ap-viz-overlay__body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s-7);
+  flex: 1;
+  align-items: stretch;
+  max-width: 1100px;
+  width: 100%;
+  margin: 0 auto;
+}
+@media (max-width: 720px) {
+  .ap-viz-overlay__body { grid-template-columns: 1fr; gap: var(--s-4); }
+}
+
+/* ---------- Voice Extraction ---------- */
+.ap-viz-pages {
+  position: relative;
+  min-height: 320px;
+}
+.ap-viz-page {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-md);
+  padding: var(--s-4);
+  opacity: 0;
+  transform: translateX(40px) rotate(2deg);
+  transition: opacity var(--t-base) var(--ease),
+              transform var(--t-base) var(--ease);
+}
+.ap-viz-page.is-in {
+  opacity: 1;
+  transform: translateX(0) rotate(0);
+}
+.ap-viz-page.is-out {
+  opacity: 0;
+  transform: translateX(-40px) rotate(-1deg);
+}
+.ap-viz-page__header {
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--ink-muted);
+  text-transform: uppercase;
+  margin-bottom: var(--s-3);
+  padding-bottom: var(--s-2);
+  border-bottom: 1px solid var(--border-soft);
+}
+.ap-viz-page__lines {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.ap-viz-page__line {
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink-faint);
+}
+.ap-viz-page__phrase {
+  display: inline;
+  padding: 2px 4px;
+  margin: 0 2px;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--ink-faint);
+  font-weight: 500;
+  transition: background var(--t-fast) var(--ease),
+              color var(--t-fast) var(--ease);
+}
+.ap-viz-page__phrase.is-highlighted {
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+.ap-viz-fingerprint {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: var(--s-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+.ap-viz-fingerprint__label {
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--accent-deep);
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--accent-soft);
+  padding-bottom: var(--s-2);
+}
+.ap-viz-fingerprint__items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  align-content: flex-start;
+}
+.ap-viz-fingerprint__item {
+  display: inline-block;
+  padding: 6px 10px;
+  background: var(--accent-soft);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: var(--r-pill);
+  opacity: 0;
+  transform: translateY(8px) scale(0.92);
+  transition: opacity var(--t-base) var(--ease),
+              transform var(--t-base) var(--ease);
+}
+.ap-viz-fingerprint__item.is-settled {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+/* ---------- CRM Mapping ---------- */
+.ap-viz-crm-rows {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: var(--s-3);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow: hidden;
+  min-height: 320px;
+  font-family: var(--font-body);
+}
+.ap-viz-crm-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--s-2) var(--s-3);
+  background: var(--bg);
+  border-radius: var(--r-sm);
+  font-size: 14px;
+  color: var(--ink-soft);
+  transform: translateY(-8px);
+  opacity: 0;
+  animation: ap-viz-row-in var(--t-base) var(--ease) forwards;
+}
+.ap-viz-crm-row.is-leaving {
+  animation: ap-viz-row-out var(--t-base) var(--ease) forwards;
+}
+@keyframes ap-viz-row-in {
+  from { transform: translateY(-8px); opacity: 0; }
+  to   { transform: translateY(0); opacity: 1; }
+}
+@keyframes ap-viz-row-out {
+  to { transform: translateY(8px); opacity: 0; }
+}
+.ap-viz-crm-row__name { font-weight: 500; }
+.ap-viz-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.ap-viz-dot--red   { background: var(--warn); box-shadow: 0 0 0 3px rgba(201, 56, 56, 0.18); }
+.ap-viz-dot--green { background: var(--ok);   box-shadow: 0 0 0 3px rgba(47, 158, 94, 0.18); }
+.ap-viz-dot--blue  { background: var(--teal); box-shadow: 0 0 0 3px rgba(46, 143, 168, 0.18); }
+.ap-viz-buckets {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+.ap-viz-bucket {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: var(--s-3);
+  align-items: center;
+  padding: var(--s-3) var(--s-4);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  transition: border-color var(--t-fast) var(--ease),
+              box-shadow var(--t-fast) var(--ease);
+}
+.ap-viz-bucket.is-active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.ap-viz-bucket__label {
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--ink);
+}
+.ap-viz-bucket__playbook {
+  font-size: 12px;
+  color: var(--ink-muted);
+  margin-top: 2px;
+}
+.ap-viz-bucket__count {
+  font-family: var(--font-display);
+  font-size: 32px;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  min-width: 48px;
+  text-align: right;
+}
+
+/* ---------- Live Simulation Streams + Latency Counter ---------- */
+.ap-viz-streams {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  border-radius: inherit;
+  z-index: 1;
+  opacity: 0;
+  transition: opacity var(--t-base) var(--ease);
+}
+.ap-viz-streams.is-active { opacity: 1; }
+.ap-viz-stream {
+  position: absolute;
+  width: 4px;
+  height: 100%;
+  background: linear-gradient(to bottom, transparent 0%, currentColor 50%, transparent 100%);
+  filter: blur(2px);
+  animation: ap-viz-stream-flow 1.6s var(--ease) infinite;
+}
+.ap-viz-stream--voice    { left: 8%;  color: var(--accent); }
+.ap-viz-stream--data     { left: 50%; color: var(--teal); animation-delay: 0.4s; }
+.ap-viz-stream--playbook { left: 92%; color: var(--ok);    animation-delay: 0.8s; }
+@keyframes ap-viz-stream-flow {
+  0%   { transform: translateY(-100%); opacity: 0; }
+  20%  { opacity: 0.6; }
+  80%  { opacity: 0.6; }
+  100% { transform: translateY(100%); opacity: 0; }
+}
+.ap-viz-counter {
+  position: absolute;
+  top: var(--s-3);
+  right: var(--s-3);
+  z-index: 2;
+  padding: 6px 10px;
+  background: var(--ink);
+  color: var(--bg);
+  font-family: var(--font-body);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  border-radius: var(--r-pill);
+  letter-spacing: 0.02em;
+  box-shadow: var(--shadow-md);
+}
+.ap-viz-counter.is-done {
+  background: var(--ok);
+  color: white;
+}
+
+.ap-activate-simulation { position: relative; }
+
+/* Citation badge "lit" state */
+.ap-activate-citation.is-lit,
+[data-citation].is-lit {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--ink);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+  transition: background var(--t-base) var(--ease),
+              border-color var(--t-base) var(--ease),
+              color var(--t-base) var(--ease),
+              box-shadow var(--t-base) var(--ease);
+}
+
+/* ---------- Recommendation Scan ---------- */
+.ap-viz-stat-examine {
+  animation: ap-viz-examine 1.2s var(--ease);
+}
+@keyframes ap-viz-examine {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.55; }
+}
+.ap-viz-scanline {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 120px;
+  height: 100vh;
+  background: linear-gradient(to right, transparent 0%, var(--accent) 50%, transparent 100%);
+  filter: blur(8px);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 50;
+}
+.ap-viz-scanline.is-sweeping {
+  animation: ap-viz-scanline-sweep 1.2s var(--ease) forwards;
+}
+@keyframes ap-viz-scanline-sweep {
+  0%   { transform: translateX(-150px); opacity: 0; }
+  20%  { opacity: 0.55; }
+  80%  { opacity: 0.55; }
+  100% { transform: translateX(calc(100vw + 50px)); opacity: 0; }
+}
+.ap-viz-chip-lit {
+  background: var(--accent-soft) !important;
+  border-color: var(--accent) !important;
+  color: var(--ink) !important;
+  transition: background var(--t-base) var(--ease),
+              border-color var(--t-base) var(--ease),
+              color var(--t-base) var(--ease);
+}
+.ap-viz-rec-considered {
+  box-shadow: 0 0 0 2px var(--accent-soft), var(--shadow-md);
+  border-color: var(--accent) !important;
+  transition: box-shadow var(--t-base) var(--ease),
+              border-color var(--t-base) var(--ease);
+}
+
+/* ---------- Reduced-motion overrides ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .ap-viz-stream,
+  .ap-viz-scanline { display: none; }
+  .ap-viz-overlay,
+  .ap-viz-page,
+  .ap-viz-fingerprint__item,
+  .ap-viz-crm-row,
+  .ap-viz-bucket,
+  .ap-viz-stat-examine {
+    animation: none !important;
+    transition: opacity 0.001ms !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}
+
