@@ -61,6 +61,12 @@ def test_schemas_have_tier2_tools():
     assert tier2 <= names
 
 
+def test_schemas_have_voice_and_data_tools():
+    """v0.6.0 voice + personalization tools are part of the surface."""
+    names = {t["name"] for t in activation_tools.TOOL_SCHEMAS}
+    assert {"propose_voice_card", "fetch_airtable_schema", "propose_crm_mapping"} <= names
+
+
 def test_every_schema_has_type_custom_and_input_schema():
     for tool in activation_tools.TOOL_SCHEMAS:
         assert tool["type"] == "custom"
@@ -635,3 +641,127 @@ def test_granted_scopes_returns_list(tmp_path, monkeypatch):
     credentials.store("acme", "google", refresh_token="x", scopes=["a", "b"])
     assert credentials.granted_scopes("acme", "google") == ["a", "b"]
     assert credentials.granted_scopes("acme", "missing") == []
+
+
+# --- v0.6.0 voice + personalization tools ----------------------------------
+
+
+def test_propose_voice_card_persists_card_and_voice_kb():
+    from dashboard_app.services import voice_card
+
+    ok, payload = activation_tools.dispatch("acme", "propose_voice_card", {
+        "traits": ["warm", "family-oriented", "bilingual"],
+        "generic_sample": "Hi! Don't forget your appointment tomorrow.",
+        "voice_sample": "Hola familia, see you in class tomorrow.",
+        "sample_context": "re-engagement reminder",
+        "source_pages": ["https://garciafolklorico.com/about"],
+    })
+    assert ok is True
+    assert payload["status"] == "rendered"
+    assert payload["card_id"].startswith("vc_")
+    assert payload["trait_count"] == 3
+
+    # Voice card persisted to state_snapshot/voice_card.json
+    saved = voice_card.load("acme")
+    assert saved is not None
+    assert saved["traits"] == ["warm", "family-oriented", "bilingual"]
+    assert "Hola familia" in saved["voice_sample"]
+
+    # Voice KB section populated for downstream Opus surfaces
+    voice_md = tenant_kb.read_section("acme", "voice")
+    assert voice_md is not None
+    assert "warm" in voice_md
+    assert "Hola familia" in voice_md
+
+
+def test_propose_voice_card_rejects_empty_traits():
+    ok, payload = activation_tools.dispatch("acme", "propose_voice_card", {
+        "traits": [],
+        "generic_sample": "x",
+        "voice_sample": "y",
+    })
+    assert ok is False
+    assert "traits" in payload["error"]
+
+
+def test_propose_voice_card_rejects_missing_samples():
+    ok, payload = activation_tools.dispatch("acme", "propose_voice_card", {
+        "traits": ["warm"],
+        "generic_sample": "",
+        "voice_sample": "y",
+    })
+    assert ok is False
+    assert "generic_sample" in payload["error"] or "voice_sample" in payload["error"]
+
+
+def test_propose_crm_mapping_persists_payload_and_md():
+    from dashboard_app.services import crm_mapping as cm
+
+    ok, payload = activation_tools.dispatch("acme", "propose_crm_mapping", {
+        "base_id": "appXXX1234567890",
+        "table_name": "Students",
+        "field_mapping": {
+            "first_name": "Child Name",
+            "last_engagement": "Registered On",
+            "contact_email": "Email",
+        },
+        "segments": [
+            {"slug": "active", "label": "Active", "count": 15, "sample_names": ["Sofia", "Diego"]},
+            {"slug": "inactive_30d", "label": "Inactive 30+ days", "count": 12,
+             "sample_names": ["Maria Sanchez", "Juan Diaz"]},
+            {"slug": "brand_new", "label": "Brand new", "count": 3, "sample_names": ["Olivia"]},
+        ],
+        "proposed_actions": [
+            {"segment": "inactive_30d", "playbook": "re_engagement", "automation": "email_assistant"},
+        ],
+    })
+    assert ok is True
+    assert payload["status"] == "rendered"
+    assert payload["mapping_id"].startswith("cm_")
+    assert payload["segment_count"] == 3
+    assert payload["action_count"] == 1
+
+    saved = cm.load("acme")
+    assert saved is not None
+    assert saved["table_name"] == "Students"
+    assert saved["segments"][1]["slug"] == "inactive_30d"
+
+    md = tenant_kb.read_section("acme", "crm_mapping")
+    assert md is not None
+    assert "Students" in md
+    assert "inactive_30d" in md
+
+
+def test_propose_crm_mapping_rejects_empty_segments():
+    ok, payload = activation_tools.dispatch("acme", "propose_crm_mapping", {
+        "base_id": "appXXX",
+        "table_name": "T",
+        "field_mapping": {"a": "b"},
+        "segments": [],
+    })
+    assert ok is False
+    assert "segments" in payload["error"]
+
+
+def test_fetch_airtable_schema_no_base_configured(tmp_path, monkeypatch):
+    """When no whitelist exists for the tenant, return a clean status not an error."""
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    ok, payload = activation_tools.dispatch("acme", "fetch_airtable_schema", {"base_id": ""})
+    assert ok is True  # graceful response, not a failure
+    assert payload["status"] == "no_base_configured"
+
+
+def test_fetch_airtable_schema_whitelist_mismatch(tmp_path, monkeypatch):
+    """A base_id outside the tenant's whitelist is rejected."""
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    # Set up a whitelist for "acme" pointing at appAAA, then try to read appBBB.
+    cfg_dir = tmp_path / "acme"
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    (cfg_dir / "tenant_config.json").write_text(
+        '{"airtable_bookings": {"base_id": "appAAA1234567890", "table_name": "T"}}',
+        encoding="utf-8",
+    )
+    ok, payload = activation_tools.dispatch("acme", "fetch_airtable_schema",
+                                            {"base_id": "appBBB1234567890"})
+    assert ok is False
+    assert "whitelist" in payload["error"]

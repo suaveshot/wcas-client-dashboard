@@ -68,10 +68,11 @@ def test_activate_renders_wizard_for_authed_tenant(tmp_path, monkeypatch):
     authed.cookies.set("wcas_session", cookie)
     r = authed.get("/activate")
     assert r.status_code == 200
-    # Locked first-message copy from okay-larry-so-flickering-lollipop.md
-    assert "Welcome in" in r.text
-    # Roster is now 7 tenant-generic automations (was 14 / then 9 earlier).
-    assert "7 automations" in r.text
+    # v0.6.0: locked agent identity copy (voice + personalization pivot).
+    assert "I learn your voice and your data" in r.text
+    # Intro carousel ships with the wizard (4 slides describing the flow).
+    assert "data-activate-intro" in r.text
+    assert "First, I read your website" in r.text
     # Connect button routes through the scope-preview screen first (§0.5).
     assert "/auth/oauth/google/preview" in r.text
     # No vendor names leaked into rendered HTML.

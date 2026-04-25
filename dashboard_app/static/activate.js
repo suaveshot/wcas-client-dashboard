@@ -134,6 +134,7 @@
       );
       if (thinking) thinking.remove();
       renderEvents(body.events || []);
+      renderPanels(body.panels || []);
       renderRings(body.rings || []);
       updateProgress(body.rings || []);
     } catch (err) {
@@ -266,6 +267,191 @@
     }
   }
 
+  function renderPanels(panels) {
+    if (!Array.isArray(panels)) return;
+    for (const p of panels) {
+      if (p.type === "voice_card") appendVoiceCardBubble(p.payload);
+      else if (p.type === "crm_mapping") appendCrmMappingBubble(p.payload);
+    }
+  }
+
+  // -------------------------------------------------------------------
+  // Panel bubbles (v0.6.0): voice card + CRM mapping
+  // -------------------------------------------------------------------
+
+  function appendVoiceCardBubble(payload) {
+    const stream = chatStream();
+    if (!stream || !payload) return;
+
+    const wrap = el("div", "ap-activate-msg ap-activate-msg--asst");
+    const glyph = el("div", "ap-activate-msg__glyph");
+    glyph.setAttribute("aria-hidden", "true");
+    glyph.textContent = "✦";
+    wrap.appendChild(glyph);
+
+    const card = el("article", "ap-activate-voice-card");
+    card.dataset.cardId = payload.card_id || "";
+
+    const head = el("header", "ap-activate-voice-card__head");
+    head.appendChild(el("h3", "ap-activate-voice-card__title", "Here's how I hear you"));
+    if (Array.isArray(payload.traits) && payload.traits.length) {
+      const traits = el("div", "ap-activate-voice-card__traits");
+      payload.traits.forEach((t) => {
+        const chip = el("span", "ap-activate-voice-card__trait", String(t));
+        traits.appendChild(chip);
+      });
+      head.appendChild(traits);
+    }
+    card.appendChild(head);
+
+    const grid = el("div", "ap-activate-voice-card__grid");
+    const left = el("div", "ap-activate-voice-card__col ap-activate-voice-card__col--generic");
+    left.appendChild(el("div", "ap-activate-voice-card__col-label", "Generic AI"));
+    left.appendChild(el("p", "ap-activate-voice-card__sample", payload.generic_sample || ""));
+    const right = el("div", "ap-activate-voice-card__col ap-activate-voice-card__col--voice");
+    right.appendChild(el("div", "ap-activate-voice-card__col-label", "Your voice"));
+    const editable = el("p", "ap-activate-voice-card__sample ap-activate-voice-card__sample--editable", payload.voice_sample || "");
+    editable.contentEditable = "true";
+    editable.setAttribute("aria-label", "Voice sample (editable)");
+    right.appendChild(editable);
+    grid.appendChild(left);
+    grid.appendChild(right);
+    card.appendChild(grid);
+
+    if (payload.sample_context) {
+      const ctx = el("div", "ap-activate-voice-card__context", "Context: " + payload.sample_context);
+      card.appendChild(ctx);
+    }
+
+    const actions = el("div", "ap-activate-voice-card__actions");
+    const accept = el("button", "ap-activate-voice-card__accept", "This is us");
+    accept.type = "button";
+    accept.addEventListener("click", async () => {
+      accept.disabled = true;
+      accept.textContent = "Saving...";
+      const edits = {};
+      const editedText = (editable.textContent || "").trim();
+      if (editedText && editedText !== (payload.voice_sample || "").trim()) {
+        edits.voice_sample = editedText;
+      }
+      try {
+        const body = await postPanelAccept("voice_card", payload.card_id, edits);
+        accept.textContent = "Saved";
+        card.classList.add("is-accepted");
+        // Disable editing post-accept.
+        editable.contentEditable = "false";
+        renderEvents(body.events || []);
+        renderPanels(body.panels || []);
+        renderRings(body.rings || []);
+        updateProgress(body.rings || []);
+      } catch (err) {
+        accept.disabled = false;
+        accept.textContent = "This is us";
+        appendSystemBubble(err.message || "Couldn't save. Try again.");
+      }
+    });
+    actions.appendChild(accept);
+    card.appendChild(actions);
+
+    const body = el("div", "ap-activate-msg__body");
+    body.appendChild(card);
+    wrap.appendChild(body);
+
+    stream.appendChild(wrap);
+    scrollChatToBottom();
+  }
+
+  function appendCrmMappingBubble(payload) {
+    const stream = chatStream();
+    if (!stream || !payload) return;
+
+    const wrap = el("div", "ap-activate-msg ap-activate-msg--asst");
+    const glyph = el("div", "ap-activate-msg__glyph");
+    glyph.setAttribute("aria-hidden", "true");
+    glyph.textContent = "✦";
+    wrap.appendChild(glyph);
+
+    const card = el("article", "ap-activate-crm-mapping");
+    card.dataset.mappingId = payload.mapping_id || "";
+
+    const head = el("header", "ap-activate-crm-mapping__head");
+    head.appendChild(el("h3", "ap-activate-crm-mapping__title", "Here's what I found in your data"));
+    head.appendChild(el(
+      "p", "ap-activate-crm-mapping__sub",
+      "Read from " + (payload.table_name || "your CRM") + " (" + (payload.base_id || "") + ")",
+    ));
+    card.appendChild(head);
+
+    const segs = el("div", "ap-activate-crm-mapping__segments");
+    (payload.segments || []).forEach((seg) => {
+      const row = el("div", "ap-activate-crm-mapping__seg");
+      const count = el("div", "ap-activate-crm-mapping__seg-count", String(seg.count || 0));
+      const meta = el("div", "ap-activate-crm-mapping__seg-meta");
+      meta.appendChild(el("div", "ap-activate-crm-mapping__seg-label", seg.label || seg.slug || ""));
+      const action = (payload.proposed_actions || []).find((a) => a.segment === seg.slug);
+      if (action) {
+        const proposal = el("div", "ap-activate-crm-mapping__seg-action",
+          "I'll run " + action.playbook.replace(/_/g, " ") + " via " + action.automation.replace(/_/g, " "));
+        meta.appendChild(proposal);
+      }
+      if (Array.isArray(seg.sample_names) && seg.sample_names.length) {
+        const names = el("div", "ap-activate-crm-mapping__seg-names",
+          "e.g. " + seg.sample_names.slice(0, 3).join(", "));
+        meta.appendChild(names);
+      }
+      row.appendChild(count);
+      row.appendChild(meta);
+      segs.appendChild(row);
+    });
+    card.appendChild(segs);
+
+    const actions = el("div", "ap-activate-crm-mapping__actions");
+    const accept = el("button", "ap-activate-crm-mapping__accept", "Looks right");
+    accept.type = "button";
+    accept.addEventListener("click", async () => {
+      accept.disabled = true;
+      accept.textContent = "Saving...";
+      try {
+        const body = await postPanelAccept("crm_mapping", payload.mapping_id, {});
+        accept.textContent = "Saved";
+        card.classList.add("is-accepted");
+        renderEvents(body.events || []);
+        renderPanels(body.panels || []);
+        renderRings(body.rings || []);
+        updateProgress(body.rings || []);
+      } catch (err) {
+        accept.disabled = false;
+        accept.textContent = "Looks right";
+        appendSystemBubble(err.message || "Couldn't save. Try again.");
+      }
+    });
+    actions.appendChild(accept);
+    card.appendChild(actions);
+
+    const body = el("div", "ap-activate-msg__body");
+    body.appendChild(card);
+    wrap.appendChild(body);
+
+    stream.appendChild(wrap);
+    scrollChatToBottom();
+  }
+
+  async function postPanelAccept(type, cardId, edits) {
+    const resp = await fetch("/api/activation/panel-accept", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type, card_id: cardId, edits: edits || {} }),
+    });
+    if (resp.status === 429) throw new Error("Too many acceptances. Wait a moment.");
+    if (!resp.ok) {
+      let detail = "Save failed.";
+      try { const j = await resp.json(); if (j && j.error) detail = j.error; } catch (_e) {}
+      throw new Error(detail);
+    }
+    return await resp.json();
+  }
+
   async function postChat(message, screenshots) {
     const body = { message };
     if (Array.isArray(screenshots) && screenshots.length > 0) {
@@ -321,6 +507,26 @@
     });
   }
 
+  function renderCitations(container, citations) {
+    if (!Array.isArray(citations) || citations.length === 0) return;
+    const row = el("div", "ap-activate-citations", null);
+    // Cap at 3, dedupe identical kind+source pairs (per plan risk mitigation).
+    const seen = new Set();
+    for (const c of citations) {
+      const key = (c.kind || "") + ":" + (c.source || "");
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (seen.size > 3) break;
+      const badge = el("span", "ap-activate-citation ap-activate-citation--" + (c.kind || "x"));
+      const k = el("span", "ap-activate-citation__kind", (c.kind || "src") + ":");
+      const s = el("span", "ap-activate-citation__source", String(c.source || "").replace(/_/g, " "));
+      badge.appendChild(k);
+      badge.appendChild(s);
+      row.appendChild(badge);
+    }
+    container.appendChild(row);
+  }
+
   function renderSample(card, sample) {
     while (card.firstChild) card.removeChild(card.firstChild);
     const eyebrow = el("div", "ap-activate-sample__eyebrow", sample.slug.replace(/_/g, " ").toUpperCase());
@@ -338,6 +544,92 @@
       sample.status === "ok" ? `Draft · ${(sample.preview || "").slice(0, 140)}` : sample.status,
     );
     card.appendChild(status);
+    // v0.6.0 provenance badges
+    renderCitations(card, sample.citations || []);
+  }
+
+  // -------------------------------------------------------------------
+  // Live customer simulation (v0.6.0 demo finale)
+  // -------------------------------------------------------------------
+
+  async function renderLiveSimulationCard() {
+    const grid = document.querySelector("[data-activate-samples-grid]");
+    const panel = document.querySelector("[data-activate-samples]");
+    if (!grid || !panel) return;
+
+    // Read the saved CRM mapping to grab the named-customer prompt text.
+    let target = null;
+    try {
+      const resp = await fetch("/api/activation/state", { credentials: "same-origin" });
+      // We don't have a direct CRM-mapping read endpoint; the simulate
+      // endpoint sources it server-side. We just need a teaser name for
+      // the prompt - peek at the state_snapshot via a side request would
+      // bloat scope. Instead, render a generic teaser and let the
+      // simulate response fill in the actual name.
+    } catch (_e) { /* ignore */ }
+
+    const card = el("article", "ap-activate-simulation");
+    card.dataset.sampleSlug = "live_simulation";
+
+    const eyebrow = el("div", "ap-activate-sample__eyebrow", "LIVE SIMULATION");
+    card.appendChild(eyebrow);
+
+    const title = el("h4", "ap-activate-simulation__title",
+      "See it in action: a real email to a real customer");
+    card.appendChild(title);
+
+    const lede = el("p", "ap-activate-simulation__lede",
+      "I'll write a re-engagement email to one of your inactive customers, in your voice, using your data. Click below to watch.");
+    card.appendChild(lede);
+
+    const cta = el("button", "ap-activate-simulation__cta", "Generate one now");
+    cta.type = "button";
+    cta.addEventListener("click", () => runLiveSimulation(card, cta));
+    card.appendChild(cta);
+
+    // Prepend so the simulation sits above the 7 weekly samples.
+    grid.insertBefore(card, grid.firstChild);
+    panel.hidden = false;
+    panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  async function runLiveSimulation(card, cta) {
+    cta.disabled = true;
+    cta.textContent = "Drafting...";
+    try {
+      const resp = await fetch("/api/activation/simulate-customer", {
+        method: "POST",
+        credentials: "same-origin",
+      });
+      if (resp.status === 429) throw new Error("Too soon. Wait a minute and try again.");
+      if (resp.status === 409) {
+        let detail = "Need a CRM mapping first. Finish the wizard.";
+        try { const j = await resp.json(); if (j && j.error) detail = j.error; } catch (_e) {}
+        throw new Error(detail);
+      }
+      if (!resp.ok) throw new Error("Generation failed.");
+      const body = await resp.json();
+      // Replace card body with the rendered draft + citations.
+      while (card.firstChild) card.removeChild(card.firstChild);
+      const eyebrow = el("div", "ap-activate-sample__eyebrow",
+        "LIVE SIMULATION · " + (body.name || "customer"));
+      card.appendChild(eyebrow);
+      const title = el("h4", "ap-activate-simulation__title", body.title || "Re-engagement draft");
+      card.appendChild(title);
+      const meta = el("div", "ap-activate-simulation__meta",
+        "Drafted to " + body.name + " (" + body.days_inactive + " days inactive), in your voice.");
+      card.appendChild(meta);
+      const draft = el("div", "ap-activate-simulation__draft");
+      draft.textContent = body.body_markdown || "";
+      card.appendChild(draft);
+      renderCitations(card, body.citations || []);
+      card.classList.add("is-generated");
+    } catch (err) {
+      cta.disabled = false;
+      cta.textContent = "Generate one now";
+      const msg = el("p", "ap-activate-simulation__error", err.message || "Generation failed.");
+      card.appendChild(msg);
+    }
   }
 
   function renderSamples(samples) {
@@ -529,6 +821,7 @@
         const body = await postChat(raw, shots);
         if (thinking) thinking.remove();
         renderEvents(body.events || []);
+        renderPanels(body.panels || []);
         renderRings(body.rings || []);
         updateProgress(body.rings || []);
 
@@ -538,9 +831,12 @@
           applyStrategyChips(plan);
         }
 
-        // After mark_activation_complete fires, kick off sample generation.
+        // After mark_activation_complete fires, kick off sample generation
+        // AND render the live customer simulation hero card at the top of
+        // the samples grid (the demo finale).
         if (detectMarkComplete(body.events)) {
           triggerSampleGeneration(); // fire-and-forget; panel updates as it returns
+          renderLiveSimulationCard().catch(() => {});
         }
 
         if (!body.reached_idle) {

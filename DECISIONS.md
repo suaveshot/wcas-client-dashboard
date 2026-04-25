@@ -545,4 +545,64 @@ Short crisp entries for each major technical decision. Format: **what, why, alte
 
 ---
 
+## ADR-029  -  Voice & Personalization pivot + three-layer adaptation model
+
+**Date:** 2026-04-25 (Day 6, v0.6.0)
+
+**Decision:** The Activation Orchestrator's job is no longer "help the owner connect their accounts." OAuth handles that in one click. Its new job is: extract voice from the website, read the CRM, propose how to map both into the existing automation playbooks, then save structured artifacts for downstream automations to read at runtime. The agent identity and 4-turn flow are designed around this. Two new visible UI moments (voice card panel + CRM mapping panel) make the work concrete on camera. A live customer simulation hero card closes the demo by drafting a real personalized email to a real inactive customer using everything the agent just learned.
+
+**Why:**
+
+- OAuth (added 0.4.0) shipped via `request_credential` + the orange Connect Google button in the UI. Empirically, the agent's "I'll guide you through the login" instructions are obsolete - the UI handles it without conversation.
+- The hard part of every multi-tenant AI platform is NOT account connection; it's making the same playbook sound like each owner and act on the right segments of their data. That's the work the agent should be doing.
+- "AI runs your business" is a saturated marketing pitch that triggers replacement anxiety. "AI learns YOUR voice and adapts MY proven playbooks to YOUR setup" matches the locked WCAS extension-not-replacement positioning and is more demo-friendly because we can SHOW it (voice card, CRM panel, live simulation) instead of claiming it.
+
+**Three-layer architecture (the philosophical anchor):**
+
+1. **Mechanics** - Sam's pre-designed playbooks (the 7 automations). Deterministic. Tuned. Never invented per-client at runtime. This is the IP that justifies the platform.
+2. **Adaptation** - What the agent does ONCE during the wizard. Reads the site, extracts voice. Reads the CRM, finds segments. Persists artifacts (`voice_card.json`, `crm_mapping.json`, `kb/voice.md`, `kb/crm_mapping.md`). NEVER re-reasons at runtime.
+3. **Personalization** - What `sample_outputs.py` and every downstream automation does on every run: read the artifacts layer 2 produced, generate text in the owner's voice. Cheap (just text generation, not orchestration). Cached by tenant via Anthropic prompt cache on the system block.
+
+This separation matters because:
+- Cost: orchestration reasoning at runtime would multiply Opus spend per tenant per automation per day. Layer 2 is one-time-per-tenant work.
+- Consistency: layer 1 is identical for every tenant; layer 3 reads the same artifacts on every run. Re-reasoning at runtime would make output non-deterministic, which clients perceive as "broken."
+- Debuggability: "config says X" is debuggable. "Opus chose X today" is not.
+- IP: the AP playbooks took years to tune. Letting Opus reinvent orchestration per tenant means every client gets a less-tested version of what already works.
+
+**Why two visible panels (not just KB writes behind the scenes):**
+
+- The same work done invisibly looks like "AI summarized things" - a verb judges and owners discount. Done visibly with side-by-side compare and segment counts, it reads as "AI did real work I can verify."
+- Owner-in-the-loop: contentEditable on the voice sample lets the owner correct the agent's read on the spot. The accepted version is what every downstream automation uses. Owner stays in charge of how they sound.
+- Demo: the panel is the proof. The video can pause on the voice card for 3 seconds and the judge gets the entire pitch.
+
+**Why a live customer simulation finale (not just the 7 first-week samples):**
+
+- The 7 samples prove the platform CAN generate per-pipeline content. They feel templated.
+- A real personalized email to a NAMED real inactive customer ("Maria Sanchez, 37 days inactive") collapses the entire chain (voice extraction → CRM mapping → personalized output) into one provable artifact. Judges (and prospective clients) see "the AI just did the actual work, addressed to a real person."
+- The deterministic-pick-of-first-inactive design means the demo is repeatable without re-rolling RNG. The seed script guarantees Maria Sanchez sorts first.
+
+**Citations on every output:**
+
+- Provenance badges (voice + data + playbook) under every sample answer the "is this just GPT wrappers?" question without saying anything.
+- Capped at 3 per card and deduped so they read as a quiet provenance signature, not visual clutter.
+
+**Per-tenant Airtable whitelist:**
+
+- `tenant_config.json` per tenant is the only allowed source of `base_id` for `fetch_airtable_schema`. Agents cannot enumerate arbitrary bases. PII scrubber runs on every returned sample row.
+- Garcia is the only tenant with a whitelisted base today. Other tenants get `no_base_configured` from the tool, which the agent narrates as "CRM connection ships next iteration."
+
+**Trade-offs:**
+
+- The voice card and CRM mapping are agent-driven, so a misbehaving model could produce a sub-par voice read or wrong segment counts. Owner accept/edit affordance is the safety net.
+- The live simulation costs one extra Opus call per click. Rate-limited to 1 per tenant per 60 seconds.
+- Voice card asks Opus for ONE structured response containing traits + voice sample (generic sample is hardcoded). Net: +1 Opus call per activation vs baseline.
+
+**Post-hackathon:**
+
+- Generalize CRM mapping to non-Airtable backends (Pipedrive, GHL native, QBO).
+- Voice card v2: allow multiple voice samples (formal email vs casual SMS vs Instagram caption), so each automation can pull the contextually-right voice.
+- Schedule a periodic re-read of voice + CRM (monthly?) since both drift over time as the business evolves.
+
+---
+
 *More ADRs added as decisions are made during the build.*

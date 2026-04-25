@@ -19,14 +19,37 @@ If you want to skip email:
 
 ## What to try (in this order)
 
-1. **Activate a new tenant on camera.** Hit `/activate` as the judge user.
-   The Activation Orchestrator (Managed Agents beta, 14 custom tools) runs
-   the setup conversation. Type *"let's get started - pull what you can
-   from americalpatrol.com"* and watch the chat: the agent fetches the
-   site, confirms basics, asks you to click *Connect Google*, then
-   narrates the probe summary with real review counts + GA4 + GSC data.
-   Six Google services connected in one consent click. Three pipeline
-   rings fill. This is the 1-day-of-onboarding-becomes-5-minutes moment.
+1. **Activate a new tenant on camera (v0.6.0 hero).** Hit `/activate?intro=1`
+   as the judge user. A 4-slide intro explains the flow. Then the **Voice
+   & Personalization specialist** (Managed Agents beta, 19 custom tools)
+   runs a 4-turn conversation:
+
+   - **Turn 1 - voice card.** Type *"let's get started - my site is
+     garciafolklorico.com"*. The agent fetches the site, extracts 3-5
+     voice traits, and renders the **voice card panel**: a hardcoded
+     generic AI message on the left, the same message rewritten in the
+     owner's voice on the right. The right side is editable. Click
+     *This is us* to accept (the voice profile saves to `tenant_kb/voice.md`
+     and every downstream automation reads from it forever).
+   - **Turn 2 - confirm + ask about CRM.** Agent saves the company facts
+     and asks what booking/CRM system you use.
+   - **Turn 3 - CRM mapping.** Tell it Airtable. The agent reads Garcia's
+     bookings base, identifies active / lapsed / brand-new student
+     segments, and renders the **CRM mapping panel** showing counts +
+     proposed automations per segment. Click *Looks right* to accept.
+   - **Turn 4 - Connect Google + activate.** One OAuth click connects
+     four roles. The remaining three light up as the agent activates
+     them, marks complete, and triggers sample generation.
+
+   **Demo finale.** A hero card appears at the top of the samples grid:
+   *"Want to see what your re-engagement email would say to Maria Sanchez
+   (37 days inactive)?"* Click. Opus drafts a real personalized email in
+   the owner's voice, addressed to a real (synthetic-but-realistic)
+   inactive customer, live, in 3 seconds. Citation badges under every
+   sample show *voice: about page*, *data: last_engagement*,
+   *playbook: re_engagement* so the provenance is visible. This is the
+   moment the entire pitch ("AI learns your voice and your data")
+   becomes a single provable artifact on screen.
 
 2. **Ask your business a question.** Hit `Cmd-K` (or `Ctrl-K`), type `?`
    followed by any question - *"which role saved me the most time this

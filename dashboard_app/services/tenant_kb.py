@@ -26,6 +26,10 @@ bug, not a gap we silently fill.
                          connect to the client's existing tools, which
                          WCAS provisions, which the owner signs up for
                          with Sam's help
+    crm_mapping      -> human-readable summary of how the tenant's CRM
+                         was mapped to a WCAS automation playbook
+                         (field mapping + segment counts). Structured
+                         counterpart lives in state_snapshot/crm_mapping.json.
 """
 
 from __future__ import annotations
@@ -48,6 +52,7 @@ SECTIONS: frozenset[str] = frozenset({
     "known_contacts",
     "existing_stack",
     "provisioning_plan",
+    "crm_mapping",
 })
 
 _SAFE_SECTION = re.compile(r"^[a-z][a-z_]{0,31}$")

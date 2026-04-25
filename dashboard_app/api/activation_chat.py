@@ -27,10 +27,12 @@ from ..services import (
     activation_state,
     audit_log,
     credentials,
+    crm_mapping,
     rate_limit,
     roster,
     screenshot_vision,
     validation_probe,
+    voice_card,
 )
 from ..services.tenant_ctx import require_tenant
 
@@ -115,6 +117,22 @@ def activation_chat(
     google_cred = credentials.load(tenant_id, "google")
     probe = validation_probe.load_result(tenant_id, "google")
 
+    # v0.6.0: surface any panel payloads the agent rendered this turn.
+    # We inspect the tool events; if propose_voice_card or propose_crm_mapping
+    # fired successfully, load the latest stored payload and ship it to the UI.
+    panels: list[dict[str, Any]] = []
+    for event in turn["events"]:
+        if event.get("role") != "tool" or not event.get("ok"):
+            continue
+        if event.get("name") == "propose_voice_card":
+            card = voice_card.load(tenant_id)
+            if card and not card.get("accepted"):
+                panels.append({"type": "voice_card", "payload": card})
+        elif event.get("name") == "propose_crm_mapping":
+            mapping = crm_mapping.load(tenant_id)
+            if mapping and not mapping.get("accepted"):
+                panels.append({"type": "crm_mapping", "payload": mapping})
+
     return {
         "events": turn["events"],
         "reached_idle": turn["reached_idle"],
@@ -123,4 +141,5 @@ def activation_chat(
         "google_connected": google_cred is not None,
         "google_validation_status": (google_cred or {}).get("validation_status", ""),
         "probe_summary": probe,
+        "panels": panels,
     }

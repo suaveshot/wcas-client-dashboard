@@ -939,3 +939,92 @@ Cut from hackathon (documented in plan): Meta OAuth (strategy flips to owner_sig
 - Replaced em dashes with " - " across 9 new files in one bulk pass via python; the test_no_em_dashes_in_source guard catches them at pytest time which keeps the brand rule trivially enforceable.
 - The Managed Agents beta 2026-04-01 SDK is text-only, so screenshot ingestion happens as a separate direct-Messages-API describe step that prepends text context to the agent's turn. Cleaner than trying to negotiate multimodal content blocks into `user.message` events.
 - Privacy page initially tripped `test_no_llm_vendor_in_rendered_html` because of an Anthropic subprocessor disclosure. Replaced with "AI model provider" to satisfy both the brand rule and CCPA/GDPR expectations.
+
+---
+
+# Entry 16 - 2026-04-25 early morning (Day 6)
+
+**Status:** 0.6.0 ready. 340 tests passing (was 292 at end of Day 5). Voice & Personalization pivot landed.
+
+## Why this entry exists
+
+OAuth (added in 0.4.0) handles credential capture in one click. That removed almost the entire credential-helper job the Activation Orchestrator was originally pitched to do. With the agent's old purpose hollowed out, we retargeted it at the part OAuth cannot do: learning the owner's voice and reading their CRM, then translating both into the proven WCAS automation playbooks so every message the platform sends downstream sounds like the owner wrote it themselves.
+
+Locked in conversation with Sam tonight: "I learn your voice and your data so the rest of your AI team sounds like you, not like a chatbot." That sentence is the new agent identity, the new wizard greeting, and the demo voiceover.
+
+## Three-layer architecture (the philosophical anchor)
+
+The agent's old job was "fill the KB and connect things." The new framing makes the philosophy explicit so judges (and future-Larry) can see why nothing about the runtime automations needed to change:
+
+1. **Mechanics** = Sam's pre-designed playbooks (the 7 automations). Deterministic. Never invented per-client at runtime. Years of tuning live here.
+2. **Adaptation** = What the agent does ONCE during the wizard. Reads the site, extracts voice. Reads the CRM, maps fields, finds segments. Writes structured artifacts to `tenant_kb` + `state_snapshot/`. Never re-reasons at runtime.
+3. **Personalization** = What the existing `sample_outputs.py` (and every downstream automation) does on every run. Reads the artifacts layer 2 produced. Cheap because it's just text generation, not orchestration.
+
+The pitch this enables: "AI learns YOUR voice and adapts MY proven playbooks to YOUR setup." Not "AI runs your business." Matches the locked WCAS extension-not-replacement positioning.
+
+## What shipped (Day 6)
+
+- **3 new tools in the agent surface:**
+  - `propose_voice_card(traits, generic_sample, voice_sample, sample_context, source_pages)` - persists a structured voice card + mirrors to `kb/voice.md`. The UI renders it as a side-by-side panel (generic AI on the left, owner's voice on the right).
+  - `fetch_airtable_schema(base_id)` - reads schema + 30 PII-scrubbed sample rows from a tenant's whitelisted Airtable base. Per-tenant base whitelist in `tenant_config.json` so agents cannot enumerate arbitrary bases.
+  - `propose_crm_mapping(base_id, table_name, field_mapping, segments, proposed_actions)` - persists the agent's translation between CRM column names and WCAS canonical fields, plus segment counts + sample names + proposed automation per segment. The UI renders it as a segment-preview panel.
+- **2 new endpoints:**
+  - `POST /api/activation/panel-accept` - owner accepts/edits a panel; the endpoint mirrors edits to `tenant_kb`, flips `accepted=true`, and triggers ONE follow-up agent turn so the conversation flows naturally without the owner having to type.
+  - `POST /api/activation/simulate-customer` - the demo finale. Reads the saved CRM mapping for an inactive customer's name + days_inactive, then generates a real personalized re-engagement email via the new `live_simulation` template. Persist=False because it's a transient hero card, not one of the saved 7 samples.
+- **System prompt rewrite** - 6-turn happy path collapses to 4 turns: (1) URL → site facts → propose voice card. (2) accept voice → confirm facts + write KB → ask about CRM. (3) read CRM → propose mapping. (4) accept mapping + Connect Google → activate rings + mark complete.
+- **Pre-wizard intro carousel** - 4 slides describing the 4-turn flow. Manual advance, Esc skips, dot indicators, focus management. Suppressed on returning visits via `localStorage`; force-show with `?intro=1` for demo recording.
+- **Voice card panel UI** - chat bubble with side-by-side grid. Right-side voice sample is `contentEditable=true` so the owner can fix wording before accepting.
+- **CRM mapping panel UI** - chat bubble with segment-by-segment preview. Each segment shows count, label, proposed automation, sample names.
+- **Live customer simulation hero card** - prepended to the samples grid post `mark_activation_complete`. CTA button generates a real personalized email + streams it back, plus citation badges showing where every word came from.
+- **Citations on every output** - voice + data + playbook badges (max 3 per card, deduped) under all 7 samples + the simulation card. Tiny styling so they read as provenance signature, not visual clutter.
+
+## Demo seed prep
+
+Garcia's bookings base (`apptsiv5kunJJa81G`, table `Students`) had 2 real records. New `scripts/seed_garcia_bookings.py` adds 30 synthetic records tagged `[seed]` in the Notes field:
+- 12 INACTIVE (Block "Spring 2026", Registered On 90-120 days ago) - the segment the live simulation pulls from
+- 15 ACTIVE (Block "Summer 2026", 5-25 days ago)
+- 3 BRAND NEW (Block "Summer 2026", 1-5 days ago)
+
+Hero is "Maria Sanchez" - registered 120 days ago, sorts FIRST when the agent reads records oldest-first, so the simulate endpoint deterministically picks her every demo run. Idempotent (deletes existing seed records before re-seeding) + `--cleanup` flag removes the synthetic data after the recording.
+
+## Files of note
+
+- `dashboard_app/services/voice_card.py` (NEW) - persistence + accept-with-edits
+- `dashboard_app/services/crm_mapping.py` (NEW) - persistence + `first_inactive_for_simulation` deterministic picker
+- `dashboard_app/services/airtable_schema.py` (NEW) - pyairtable wrapper, per-tenant whitelist, PII-scrubbed sample rows
+- `dashboard_app/services/activation_tools.py` - +3 schemas + handlers, +2 imports
+- `dashboard_app/services/sample_outputs.py` - `live_simulation` template + `citations_for(slug)` helper + `template_vars` + `persist=False` flags on `generate_for_pipeline`
+- `dashboard_app/services/tenant_kb.py` - `crm_mapping` added to SECTIONS whitelist
+- `dashboard_app/agents/activation_agent.py` - SYSTEM_PROMPT rewrite (Activation Orchestrator → Voice & Personalization specialist), 4-turn happy path, `_tool_summary` extended for the 3 new tools
+- `dashboard_app/api/activation_chat.py` - response now carries `panels[]` derived from successful `propose_voice_card` / `propose_crm_mapping` tool events
+- `dashboard_app/api/activation_panel.py` (NEW) - panel-accept endpoint
+- `dashboard_app/api/activation_simulate.py` (NEW) - simulate-customer endpoint
+- `dashboard_app/templates/activate.html` - intro carousel markup, new welcome bubble copy, `data-tenant-id` on body
+- `dashboard_app/static/intro.js` (NEW) - carousel controller (~140 lines)
+- `dashboard_app/static/activate.js` - +`renderPanels` + `appendVoiceCardBubble` + `appendCrmMappingBubble` + `renderCitations` + `renderLiveSimulationCard` + `runLiveSimulation` + `postPanelAccept`
+- `dashboard_app/static/styles.css` - +intro carousel + voice card + CRM mapping + citations + simulation hero card (~480 lines added)
+- `scripts/seed_garcia_bookings.py` (NEW) - idempotent demo seeder
+- `_local_tenant_root/garcia_folklorico/tenant_config.json` (NEW) - sample tenant config with bookings base whitelist
+- `tests/test_voice_card.py` (NEW, 8 cases)
+- `tests/test_crm_mapping.py` (NEW, 9 cases)
+- `tests/test_airtable_schema.py` (NEW, 8 cases) - mocks pyairtable Api at the seam
+- `tests/test_activation_panel.py` (NEW, 7 cases) - mocks `run_turn`
+- `tests/test_activation_simulate.py` (NEW, 4 cases) - mocks `generate_for_pipeline`
+- `tests/test_sample_outputs.py` (NEW, 5 cases) - citations + live_simulation template contract
+- `tests/test_activation_tools.py` - +7 cases for the 3 new tools
+- `tests/test_smoke.py` - updated for new welcome copy + intro carousel markup
+
+## Saturday deploy plan
+
+1. `ssh garcia-vps 'cd /docker/wcas-dashboard/app && git pull && cd .. && docker compose up -d --build'`. Verify `/healthz` returns `0.6.0`.
+2. On the VPS, `python scripts/seed_garcia_bookings.py --dry-run` first (verify count + Maria Sanchez at the top), then without `--dry-run`. AIRTABLE_PAT is already in `/docker/wcas-dashboard/.env`.
+3. Copy `_local_tenant_root/garcia_folklorico/tenant_config.json` to `/opt/wc-solns/garcia_folklorico/tenant_config.json` on the VPS so `airtable_schema.fetch_schema` whitelists Garcia's base.
+4. Live smoke as Garcia (Itzel's email magic-link): visit `/activate?intro=1`, walk through intro, voice panel, accept, CRM panel, accept, OAuth, mark complete, click the simulation hero card, watch Maria's email draft live.
+5. Record video. Submission Saturday.
+
+## Surprising bits this session
+
+- The `panels[]` field is purely server-derived: chat router inspects tool events from `run_turn`, looks up the latest `voice_card.json` / `crm_mapping.json` from disk, and ships the structured payload to the UI. No new agent SDK contract needed.
+- `mark_accepted` returning the updated payload (instead of a bool) made the tests trivially explicit about what changed.
+- Intro carousel sits OUTSIDE the React-less wizard chrome; pure HTML overlay + ~140 lines of vanilla JS. Took less time than picking the dot indicator color.
+- The `live_simulation` template carries `persist=False` so the demo finale doesn't pollute the saved samples directory. One flag, two semantics.

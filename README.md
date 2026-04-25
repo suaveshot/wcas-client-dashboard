@@ -7,22 +7,36 @@
 
 **Hackathon submission:** [Built with Opus 4.7](https://cerebralvalley.ai/e/built-with-4-7-hackathon) on Cerebral Valley, Apr 21-26, 2026.
 
-**Live:** [dashboard.westcoastautomationsolutions.com](https://dashboard.westcoastautomationsolutions.com) · `{"status":"ok","version":"0.4.0"}` on `/healthz`.
+**Live:** [dashboard.westcoastautomationsolutions.com](https://dashboard.westcoastautomationsolutions.com) · `{"status":"ok","version":"0.6.0"}` on `/healthz`.
 
 **For judges:** see [`docs/judge.md`](./docs/judge.md) for the one-page tour.
 
 ## What it does
 
-Owner-operators in service businesses buy the WCAS ten-automation platform -
-SEO, blogs, Google Ads, sales pipeline, email assistant, GBP, reviews, voice
-agent, social, and QBRs. Automations that ship without a live monitoring
-surface turn into a black box. This dashboard is the surface.
+> **The pitch (v0.6.0):** I learn your voice and your data so the rest of
+> your AI team sounds like you, not like a chatbot.
 
-0. **Activation wizard** - new owner lands on `/activate`, chats with the
-   Activation Orchestrator (Managed Agent, 14 tools), and one Google OAuth
-   click connects 3 roles (GBP, SEO, Reviews). The agent reads their site,
-   confirms basics, provisions a GA4 property + a Search Console site,
-   and narrates what it found using real numbers. Hero demo.
+Owner-operators in service businesses buy the WCAS seven-automation platform.
+The hard part of every AI platform isn't the OAuth, it's making the AI sound
+like the owner and act on the right customers. This dashboard makes that
+adaptation visible: read the site, learn the voice, read the CRM, find
+segments worth acting on, then prove it by drafting a real personalized
+message in the owner's voice for one of their actual customers - live, on
+camera.
+
+0. **Activation wizard** - new owner lands on `/activate`, sees a 4-slide
+   intro of what's coming, then meets the Voice & Personalization specialist
+   (Claude Managed Agent, 19 tools). The agent reads the site, extracts 3-5
+   voice traits, and renders the **voice card panel**: side-by-side compare
+   of a generic AI message vs the same message in the owner's voice. Owner
+   accepts. The agent then reads the owner's Airtable CRM, finds active /
+   lapsed / brand-new segments, and renders the **CRM mapping panel** with
+   proposed automations per segment. Owner accepts. One Google OAuth click
+   connects the rest. Demo finale: a hero card asks "Want to see what your
+   re-engagement email would say to <a real inactive customer>?" - one click,
+   real personalized email drafted live in the owner's voice. Citation
+   badges under every output show provenance (voice from About page, data
+   from Last Class Date, playbook re_engagement).
 1. **Home** - a 14-role grid with live status and a narrative summary. Hero
    stats show Weeks Saved, Revenue Influenced, and Goal Progress.
 2. **Global Ask (Opus 4.7 flagship)** - `Cmd-K`, type `?`, ask your business

@@ -11,10 +11,99 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="/static/styles.css?v=20260424e">
+    <link rel="stylesheet" href="/static/styles.css?v=20260425a">
 </head>
-<body class="ap-activate-body">
+<body class="ap-activate-body" data-tenant-id="{{ tenant_id }}">
 <a href="#ap-activate-main" class="ap-sr">Skip to main content</a>
+
+{# v0.6.0 intro carousel: 4 slides describing the 4-turn flow.
+   Hidden by default. intro.js fades it in on first visit (or ?intro=1).
+   Manual advance only - no autoplay. Esc key skips. #}
+<section class="ap-activate-intro" data-activate-intro hidden aria-hidden="true">
+    <div class="ap-activate-intro__card" role="dialog" aria-labelledby="ap-intro-title" aria-modal="true">
+        <button type="button" class="ap-activate-intro__skip" data-activate-intro-skip>Skip intro</button>
+
+        <div class="ap-activate-intro__track" data-activate-intro-track>
+            <article class="ap-activate-intro__slide is-active" data-intro-slide="0">
+                <div class="ap-activate-intro__glyph" aria-hidden="true">
+                    <svg viewBox="0 0 64 64" width="56" height="56" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="6" y="14" width="52" height="36" rx="3"/>
+                        <line x1="6" y1="22" x2="58" y2="22"/>
+                        <circle cx="11" cy="18" r="0.8" fill="currentColor"/>
+                        <circle cx="14" cy="18" r="0.8" fill="currentColor"/>
+                        <line x1="14" y1="32" x2="50" y2="32"/>
+                        <line x1="14" y1="38" x2="44" y2="38"/>
+                        <line x1="14" y1="44" x2="38" y2="44"/>
+                    </svg>
+                </div>
+                <h2 id="ap-intro-title" class="ap-activate-intro__title">First, I read your website.</h2>
+                <p class="ap-activate-intro__lede">
+                    I'll learn how you sound, then show you what I heard so you can tell me if I got it right.
+                </p>
+            </article>
+
+            <article class="ap-activate-intro__slide" data-intro-slide="1">
+                <div class="ap-activate-intro__glyph" aria-hidden="true">
+                    <svg viewBox="0 0 64 64" width="56" height="56" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="8" y="10" width="48" height="44" rx="3"/>
+                        <line x1="8" y1="20" x2="56" y2="20"/>
+                        <line x1="22" y1="20" x2="22" y2="54"/>
+                        <line x1="14" y1="28" x2="18" y2="28"/>
+                        <line x1="14" y1="36" x2="18" y2="36"/>
+                        <line x1="14" y1="44" x2="18" y2="44"/>
+                        <line x1="28" y1="28" x2="50" y2="28"/>
+                        <line x1="28" y1="36" x2="46" y2="36"/>
+                        <line x1="28" y1="44" x2="42" y2="44"/>
+                    </svg>
+                </div>
+                <h2 class="ap-activate-intro__title">Then I read your data.</h2>
+                <p class="ap-activate-intro__lede">
+                    I'll find the customer segments worth acting on (lapsed, brand new, regulars) so the automations target the right people.
+                </p>
+            </article>
+
+            <article class="ap-activate-intro__slide" data-intro-slide="2">
+                <div class="ap-activate-intro__glyph" aria-hidden="true">
+                    <svg viewBox="0 0 64 64" width="56" height="56" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="32" cy="32" r="22"/>
+                        <path d="M10 32h44M32 10c5 6 8 14 8 22s-3 16-8 22c-5-6-8-14-8-22s3-16 8-22z"/>
+                    </svg>
+                </div>
+                <h2 class="ap-activate-intro__title">One click connects the rest.</h2>
+                <p class="ap-activate-intro__lede">
+                    Google handles the logins. I don't need your passwords - just one button and your accounts are wired.
+                </p>
+            </article>
+
+            <article class="ap-activate-intro__slide" data-intro-slide="3">
+                <div class="ap-activate-intro__glyph" aria-hidden="true">
+                    <svg viewBox="0 0 64 64" width="56" height="56" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 16h32l8 8v24a4 4 0 0 1-4 4H12a4 4 0 0 1-4-4V20a4 4 0 0 1 4-4z"/>
+                        <path d="M44 16v8h8"/>
+                        <path d="M16 32h28M16 38h28M16 44h20"/>
+                    </svg>
+                </div>
+                <h2 class="ap-activate-intro__title">Then I draft your first week.</h2>
+                <p class="ap-activate-intro__lede">
+                    Real posts, real review replies, real emails, all in your voice, all ready for you to review and send.
+                </p>
+            </article>
+        </div>
+
+        <div class="ap-activate-intro__nav">
+            <div class="ap-activate-intro__dots" role="tablist" aria-label="Slide indicator">
+                <button type="button" class="ap-activate-intro__dot is-active" data-activate-intro-dot="0" aria-label="Slide 1 of 4"></button>
+                <button type="button" class="ap-activate-intro__dot" data-activate-intro-dot="1" aria-label="Slide 2 of 4"></button>
+                <button type="button" class="ap-activate-intro__dot" data-activate-intro-dot="2" aria-label="Slide 3 of 4"></button>
+                <button type="button" class="ap-activate-intro__dot" data-activate-intro-dot="3" aria-label="Slide 4 of 4"></button>
+            </div>
+            <button type="button" class="ap-activate-intro__next" data-activate-intro-next>
+                <span data-activate-intro-next-label>Next</span>
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+            </button>
+        </div>
+    </div>
+</section>
 
 <header class="ap-activate-bar" role="banner">
     <a class="ap-activate-bar__back" href="/dashboard" aria-label="Back to dashboard">
@@ -43,11 +132,10 @@
                 <div class="ap-activate-msg__glyph" aria-hidden="true">&#10022;</div>
                 <div class="ap-activate-msg__body">
                     <p class="ap-activate-msg__first">
-                        Welcome in. I'm going to set up your {{ roster|length }} automations, one at a time.
+                        I learn your voice and your data so the rest of your AI team sounds like you, not like a chatbot.
                     </p>
                     <p>
-                        Most owners finish in about 20 minutes. If you need to stop, I save as we go.
-                        What's your website URL? Paste it and I'll take it from there.
+                        Drop your website URL below. I'll read it, then show you how I hear you.
                     </p>
                 </div>
             </div>
@@ -252,6 +340,7 @@
     </aside>
 </main>
 
-<script defer src="/static/activate.js?v=20260424d"></script>
+<script defer src="/static/intro.js?v=20260425a"></script>
+<script defer src="/static/activate.js?v=20260425a"></script>
 </body>
 </html>

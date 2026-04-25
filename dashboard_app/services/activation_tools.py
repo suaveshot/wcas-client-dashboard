@@ -31,13 +31,16 @@ import httpx
 
 from . import (
     activation_state,
+    airtable_schema,
     audit_log,
     clients_repo,
     credentials,
+    crm_mapping,
     email_sender,
     heartbeat_store,
     tenant_kb,
     validation_probe,
+    voice_card,
 )
 
 log = logging.getLogger("dashboard.activation_tools")
@@ -510,6 +513,166 @@ def _capture_baseline(tenant_id: str, args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _propose_voice_card(tenant_id: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Persist the voice card the agent extracted from the site fetch.
+
+    Side effects:
+      - state_snapshot/voice_card.json (structured, for the UI panel)
+      - kb/voice.md (human-readable mirror, for downstream Opus surfaces)
+
+    Returns a `card_id` the UI uses for the panel-accept callback.
+    """
+    traits = args.get("traits") or []
+    if not isinstance(traits, list) or not traits:
+        raise ToolError("traits must be a non-empty array")
+    generic = (args.get("generic_sample") or "").strip()
+    voice_sample = (args.get("voice_sample") or "").strip()
+    if not generic or not voice_sample:
+        raise ToolError("generic_sample and voice_sample are required")
+
+    sample_context = (args.get("sample_context") or "").strip()
+    source_pages = args.get("source_pages") or []
+    if not isinstance(source_pages, list):
+        source_pages = []
+
+    payload = voice_card.save(
+        tenant_id,
+        traits=[str(t) for t in traits],
+        generic_sample=generic,
+        voice_sample=voice_sample,
+        sample_context=sample_context,
+        source_pages=[str(p) for p in source_pages],
+    )
+
+    # Mirror the structured card into voice.md so every downstream Opus
+    # surface (sample generator, recs, ask, future agents) reads the
+    # same voice description as the UI panel.
+    md_lines = [
+        "## Voice traits",
+        "",
+        *(f"- {t}" for t in payload["traits"]),
+        "",
+        "## Sample message in this voice",
+        "",
+        f"_Context: {payload['sample_context'] or 'general greeting'}_",
+        "",
+        payload["voice_sample"],
+        "",
+        "## For comparison: generic AI version",
+        "",
+        payload["generic_sample"],
+    ]
+    try:
+        tenant_kb.write_section(tenant_id, "voice", "\n".join(md_lines))
+    except tenant_kb.KbError as exc:
+        raise ToolError(f"voice KB write failed: {exc}") from exc
+
+    return {
+        "status": "rendered",
+        "card_id": payload["card_id"],
+        "panel_type": "voice_card",
+        "trait_count": len(payload["traits"]),
+    }
+
+
+def _fetch_airtable_schema(tenant_id: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Read the schema (+ small set of scrubbed sample rows) of a tenant's
+    whitelisted Airtable base. Per-tenant base_id whitelist enforced."""
+    base_id = (args.get("base_id") or "").strip()
+    if not base_id:
+        # If the agent didn't pass one, fall back to the whitelisted default.
+        whitelisted = airtable_schema.whitelisted_base_id(tenant_id, "airtable_bookings")
+        if not whitelisted:
+            return {
+                "status": "no_base_configured",
+                "hint": (
+                    "This tenant has no Airtable base whitelisted yet. "
+                    "Sam can register one in tenant_config.json before "
+                    "running the CRM mapping step."
+                ),
+            }
+        base_id = whitelisted
+
+    try:
+        schema = airtable_schema.fetch_schema(tenant_id, base_id)
+    except airtable_schema.AirtableSchemaError as exc:
+        raise ToolError(str(exc)) from exc
+
+    return {
+        "status": "ok",
+        "base_id": schema["base_id"],
+        "table_count": len(schema["tables"]),
+        "tables": schema["tables"],
+    }
+
+
+def _propose_crm_mapping(tenant_id: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Persist the agent's mapping of the tenant's CRM to a WCAS playbook.
+
+    Side effects:
+      - state_snapshot/crm_mapping.json (structured, for the UI panel + simulate endpoint)
+      - kb/crm_mapping.md (human-readable mirror, for Sam's concierge handoff)
+    """
+    base_id = (args.get("base_id") or "").strip()
+    table_name = (args.get("table_name") or "").strip()
+    if not base_id or not table_name:
+        raise ToolError("base_id and table_name are required")
+
+    field_mapping = args.get("field_mapping") or {}
+    if not isinstance(field_mapping, dict) or not field_mapping:
+        raise ToolError("field_mapping must be a non-empty object")
+
+    segments = args.get("segments") or []
+    if not isinstance(segments, list) or not segments:
+        raise ToolError("segments must be a non-empty array")
+
+    proposed_actions = args.get("proposed_actions") or []
+    if not isinstance(proposed_actions, list):
+        proposed_actions = []
+
+    payload = crm_mapping.save(
+        tenant_id,
+        base_id=base_id,
+        table_name=table_name,
+        field_mapping=field_mapping,
+        segments=segments,
+        proposed_actions=proposed_actions,
+    )
+
+    # Markdown mirror so the handoff doc has it.
+    md_lines = [
+        f"**Base:** `{payload['base_id']}` table `{payload['table_name']}`",
+        "",
+        "## Field mapping",
+        "",
+        "| WCAS field | Their column |",
+        "|---|---|",
+    ]
+    for wcas, theirs in payload["field_mapping"].items():
+        md_lines.append(f"| `{wcas}` | {theirs} |")
+    md_lines.extend(["", "## Segments"])
+    for seg in payload["segments"]:
+        md_lines.append(f"- **{seg['label']}** ({seg['count']}) - slug `{seg['slug']}`")
+    if payload["proposed_actions"]:
+        md_lines.extend(["", "## Proposed actions"])
+        for act in payload["proposed_actions"]:
+            md_lines.append(
+                f"- segment `{act['segment']}` -> playbook `{act['playbook']}` via `{act['automation']}`"
+            )
+    try:
+        tenant_kb.write_section(tenant_id, "crm_mapping", "\n".join(md_lines))
+    except tenant_kb.KbError as exc:
+        raise ToolError(f"crm_mapping KB write failed: {exc}") from exc
+
+    return {
+        "status": "rendered",
+        "mapping_id": payload["mapping_id"],
+        "panel_type": "crm_mapping",
+        "segment_count": len(payload["segments"]),
+        "action_count": len(payload["proposed_actions"]),
+    }
+
+
 def _mark_activation_complete(tenant_id: str, args: dict[str, Any]) -> dict[str, Any]:
     """Mark the tenant as activated. First-run rings stay to be filled as pipelines execute."""
     note = (args.get("note") or "").strip()
@@ -979,6 +1142,99 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         },
     ),
 
+    # ---- v0.6.0 Voice & Personalization pivot (3) ---------------------------
+    _custom(
+        "propose_voice_card",
+        "Render the side-by-side voice comparison panel in the wizard chat. "
+        "Call this AFTER fetch_site_facts when you've extracted the owner's "
+        "voice from the raw HTML. Pass 3-5 trait keywords describing how they "
+        "sound, a hardcoded `generic_sample` (the bland AI version of a typical "
+        "message - e.g. 'Hi! Don't forget your appointment tomorrow.'), and a "
+        "`voice_sample` you wrote in the owner's actual voice for the same "
+        "context. This persists voice.md AND a structured panel the UI renders. "
+        "Call ONCE per session (call again only if the owner edits their voice).",
+        {
+            "type": "object",
+            "properties": {
+                "traits": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "3-5 short keywords (e.g. 'warm', 'family-oriented', 'bilingual')",
+                },
+                "generic_sample": {"type": "string", "description": "The bland AI version of a typical message (~1-2 sentences)"},
+                "voice_sample": {"type": "string", "description": "The same message rewritten in this owner's voice (~1-2 sentences)"},
+                "sample_context": {"type": "string", "description": "What kind of message it is (e.g. 're-engagement reminder text')"},
+                "source_pages": {"type": "array", "items": {"type": "string"}, "description": "URLs you pulled the voice from (max 5)"},
+            },
+            "required": ["traits", "generic_sample", "voice_sample"],
+        },
+    ),
+    _custom(
+        "fetch_airtable_schema",
+        "Read the schema + a small set of recent rows from the tenant's "
+        "whitelisted Airtable base (their CRM / bookings system). Returns "
+        "table names, fields, row counts, and 5 sample rows per table with "
+        "PII scrubbed. Per-tenant whitelist enforced; the agent cannot read "
+        "arbitrary bases. Pass an empty base_id to use the tenant's default "
+        "whitelisted base. Call BEFORE propose_crm_mapping so you have real "
+        "data to map.",
+        {
+            "type": "object",
+            "properties": {
+                "base_id": {"type": "string", "description": "Airtable base ID (appXXX). Empty string falls back to the tenant's whitelisted default."},
+            },
+        },
+    ),
+    _custom(
+        "propose_crm_mapping",
+        "Render the CRM mapping panel: a segment preview ('47 active, 12 "
+        "inactive 30+ days, 3 brand new this month') with proposed automations "
+        "for each segment. Call this AFTER fetch_airtable_schema. Field mapping "
+        "is YOUR translation between WCAS canonical fields (first_name, "
+        "last_engagement, contact_email, etc.) and the tenant's actual column "
+        "names. Segments are YOUR analysis of who's worth acting on. Proposed "
+        "actions tie segments to WCAS playbooks the owner will see activated. "
+        "Call ONCE per session.",
+        {
+            "type": "object",
+            "properties": {
+                "base_id": {"type": "string", "description": "Same base_id you read from"},
+                "table_name": {"type": "string", "description": "The primary table (e.g. 'Bookings', 'Contacts')"},
+                "field_mapping": {
+                    "type": "object",
+                    "description": "WCAS canonical field -> their column name. Keys are canonical: first_name, last_engagement, contact_email, etc.",
+                    "additionalProperties": {"type": "string"},
+                },
+                "segments": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "slug": {"type": "string", "description": "machine slug (e.g. 'inactive_30d', 'active', 'brand_new')"},
+                            "label": {"type": "string", "description": "human label for the panel (e.g. 'Inactive 30+ days')"},
+                            "count": {"type": "integer"},
+                            "sample_names": {"type": "array", "items": {"type": "string"}, "description": "Up to 5 example names from the data (already scrubbed)"},
+                        },
+                        "required": ["slug", "label", "count"],
+                    },
+                },
+                "proposed_actions": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "segment": {"type": "string"},
+                            "playbook": {"type": "string", "description": "e.g. 're_engagement', 'welcome_series'"},
+                            "automation": {"type": "string", "description": "Which of the 7 WCAS automations runs it (e.g. 'email_assistant')"},
+                        },
+                        "required": ["segment", "playbook", "automation"],
+                    },
+                },
+            },
+            "required": ["base_id", "table_name", "field_mapping", "segments"],
+        },
+    ),
+
     # ---- §4 Discovery + §5 provisioning plan --------------------------------
     _custom(
         "detect_website_platform",
@@ -1049,6 +1305,10 @@ HANDLERS: dict[str, Callable[[str, dict[str, Any]], dict[str, Any]]] = {
     "mark_activation_complete": _mark_activation_complete,
     "create_ga4_property": _create_ga4_property,
     "verify_gsc_domain": _verify_gsc_domain,
+    # v0.6.0 Voice & Personalization pivot
+    "propose_voice_card": _propose_voice_card,
+    "fetch_airtable_schema": _fetch_airtable_schema,
+    "propose_crm_mapping": _propose_crm_mapping,
     # Stubs (ship next session)
     "set_schedule": _stub("set_schedule"),
     "set_preference": _stub("set_preference"),

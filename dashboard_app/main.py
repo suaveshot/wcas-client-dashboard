@@ -18,6 +18,8 @@ from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .api import activation_chat as activation_chat_api
+from .api import activation_panel as activation_panel_api
+from .api import activation_simulate as activation_simulate_api
 from .api import ask as ask_api
 from .api import ask_global as ask_global_api
 from .api import attention as attention_api
@@ -47,7 +49,7 @@ TEMPLATES_DIR = APP_DIR / "templates"
 app = FastAPI(
     title="WCAS Client Dashboard",
     description="Agency-level client activation + live automation telemetry.",
-    version="0.5.0",
+    version="0.6.0",
 )
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -69,6 +71,8 @@ app.include_router(brand_api.router)
 app.include_router(heartbeat_api.router)
 app.include_router(oauth_api.router)
 app.include_router(activation_chat_api.router)
+app.include_router(activation_panel_api.router)
+app.include_router(activation_simulate_api.router)
 app.include_router(activation_terms_api.router)
 app.include_router(activation_samples_api.router)
 app.include_router(activation_screenshot_api.router)
@@ -245,6 +249,7 @@ async def activate_page(request: Request, tenant_id: str = Depends(require_tenan
         request,
         "activate.html",
         {
+            "tenant_id": tenant_id,
             "tenant_name": tenant_id.replace("_", " ").title(),
             "roster": roster_with_state,
             "google_connected": google_cred is not None,

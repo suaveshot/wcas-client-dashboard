@@ -70,6 +70,55 @@ Hard rules:
 - If the KB lacks data you need, invent nothing that would be business-sensitive (prices, dates, legal claims). Keep the sample realistic but obviously a draft."""
 
 
+# Each template advertises its citations: which KB sections feed its voice,
+# which CRM fields/segments feed its data, which WCAS playbook drives its
+# mechanics. The UI renders these as small provenance badges under each
+# sample so judges (and owners) see where every word came from. Citations
+# are deterministic per template; no Opus call required to compute them.
+_CITATIONS: dict[str, list[dict[str, str]]] = {
+    "gbp": [
+        {"kind": "voice", "source": "voice"},
+        {"kind": "data", "source": "services"},
+        {"kind": "playbook", "source": "gbp_post"},
+    ],
+    "seo": [
+        {"kind": "voice", "source": "voice"},
+        {"kind": "data", "source": "company"},
+        {"kind": "playbook", "source": "seo_health"},
+    ],
+    "reviews": [
+        {"kind": "voice", "source": "voice"},
+        {"kind": "data", "source": "services"},
+        {"kind": "playbook", "source": "review_reply"},
+    ],
+    "email_assistant": [
+        {"kind": "voice", "source": "voice"},
+        {"kind": "data", "source": "services"},
+        {"kind": "playbook", "source": "inbound_reply"},
+    ],
+    "chat_widget": [
+        {"kind": "voice", "source": "voice"},
+        {"kind": "data", "source": "faq"},
+        {"kind": "playbook", "source": "chat_turn"},
+    ],
+    "blog": [
+        {"kind": "voice", "source": "voice"},
+        {"kind": "data", "source": "services"},
+        {"kind": "playbook", "source": "blog_post"},
+    ],
+    "social": [
+        {"kind": "voice", "source": "voice"},
+        {"kind": "data", "source": "services"},
+        {"kind": "playbook", "source": "social_week"},
+    ],
+    "live_simulation": [
+        {"kind": "voice", "source": "voice"},
+        {"kind": "data", "source": "last_engagement"},
+        {"kind": "playbook", "source": "re_engagement"},
+    ],
+}
+
+
 _TEMPLATES: dict[str, str] = {
     "gbp": (
         "Draft this business's first Google Business Profile post of the month. "
@@ -126,6 +175,29 @@ _TEMPLATES: dict[str, str] = {
         "one behind-the-scenes, one promotional. title: 'Social week draft: 3 posts'. "
         "body_markdown uses ### for each post's day (Monday, Wednesday, Friday) + bullet "
         "points for caption and image-direction. " + _OUTPUT_CONTRACT
+    ),
+    # Live customer simulation: takes a SPECIFIC named customer + how many
+    # days they've been inactive and drafts the actual re-engagement email
+    # the email_assistant pipeline would queue for owner approval. This is
+    # the demo finale: judges see the entire chain (voice extraction + CRM
+    # mapping + voice-matched drafting) collapse into one personalized
+    # message addressed to a real-looking person.
+    #
+    # The endpoint substitutes {name} and {days_inactive} into the template
+    # before sending; KB context provides the voice + service vocabulary.
+    "live_simulation": (
+        "A specific customer of this business hasn't engaged in a while: "
+        "name={name}, days since last engagement={days_inactive}. "
+        "Draft the personalized re-engagement email the email_assistant "
+        "pipeline would queue for the owner's approval. Address them by "
+        "first name. Reference the kind of service they would have last "
+        "used (pull from SERVICES section). Voice MUST match the VOICE "
+        "section verbatim (warm, in-the-owner's-words, not corporate). "
+        "Keep the email under 130 words. End with a specific, low-friction "
+        "next step (book a class, reply to this email, drop in this week). "
+        "title: 'Re-engagement draft for ' + the first name. "
+        "body_markdown is the email itself: Subject line first, blank line, "
+        "then the body. " + _OUTPUT_CONTRACT
     ),
 }
 
@@ -241,23 +313,43 @@ def _parse_output(raw_text: str, slug: str) -> dict[str, Any]:
     return {"title": title, "body_markdown": body, "preview": preview}
 
 
+def citations_for(slug: str) -> list[dict[str, str]]:
+    """Return the canonical provenance badges for a sample slug. Empty list
+    for unknown slugs so downstream code never crashes on a typo."""
+    return list(_CITATIONS.get(slug, []))
+
+
 def generate_for_pipeline(
     tenant_id: str,
     slug: str,
     *,
     context: str | None = None,
     model: str | None = None,
+    template_vars: dict[str, Any] | None = None,
+    persist: bool = True,
 ) -> dict[str, Any]:
     """Generate + persist one sample output for a single pipeline.
 
     `context` lets callers pass a pre-assembled tenant context so a batch
     of 7 calls shares one cached system block (see generate_all_for_tenant).
+    `template_vars` lets parameterized templates (e.g. live_simulation)
+    substitute {name}, {days_inactive}, etc. into the prompt body.
+    `persist=False` suppresses the on-disk write (used by the simulate
+    endpoint, which returns the draft directly without polluting the
+    samples/ directory).
     """
     if slug not in _TEMPLATES:
         raise ValueError(f"unknown pipeline slug: {slug!r}")
 
     context_block = context or _assemble_tenant_context(tenant_id)
     prompt = _TEMPLATES[slug]
+    if template_vars:
+        try:
+            prompt = prompt.format(**template_vars)
+        except (KeyError, IndexError) as exc:
+            raise ValueError(
+                f"template_vars missing required key for slug {slug!r}: {exc}"
+            ) from exc
 
     try:
         result = opus.chat(
@@ -286,8 +378,10 @@ def generate_for_pipeline(
             "usd": 0.0,
             "input_tokens": 0,
             "output_tokens": 0,
+            "citations": citations_for(slug),
         }
-        _save_sample(tenant_id, slug, payload)
+        if persist:
+            _save_sample(tenant_id, slug, payload)
         return payload
     except opus.OpusUnavailable as exc:
         payload = {
@@ -301,8 +395,10 @@ def generate_for_pipeline(
             "usd": 0.0,
             "input_tokens": 0,
             "output_tokens": 0,
+            "citations": citations_for(slug),
         }
-        _save_sample(tenant_id, slug, payload)
+        if persist:
+            _save_sample(tenant_id, slug, payload)
         return payload
 
     parsed = _parse_output(result.text, slug)
@@ -318,16 +414,22 @@ def generate_for_pipeline(
         "input_tokens": result.input_tokens,
         "output_tokens": result.output_tokens,
         "usd": result.usd,
+        "citations": citations_for(slug),
     }
-    _save_sample(tenant_id, slug, payload)
+    if persist:
+        _save_sample(tenant_id, slug, payload)
     return payload
 
 
 def generate_all_for_tenant(tenant_id: str, *, model: str | None = None) -> list[dict[str, Any]]:
-    """Batch generate all 7 samples. Shares one cached system block across calls."""
+    """Batch generate all 7 user-facing samples. Shares one cached system
+    block across calls. Skips live_simulation - that one is generated
+    on-demand by the simulate-customer endpoint with template_vars."""
     context = _assemble_tenant_context(tenant_id)
     out: list[dict[str, Any]] = []
     for slug in _TEMPLATES.keys():
+        if slug == "live_simulation":
+            continue
         try:
             out.append(generate_for_pipeline(tenant_id, slug, context=context, model=model))
         except Exception: # defensive: one failure doesn't kill the batch
@@ -341,10 +443,13 @@ def generate_all_for_tenant(tenant_id: str, *, model: str | None = None) -> list
                 "preview": "Error during generation.",
                 "generated_at": datetime.now(timezone.utc).isoformat(),
                 "usd": 0.0,
+                "citations": citations_for(slug),
             }
             _save_sample(tenant_id, slug, fallback)
             out.append(fallback)
     return out
 
 
-PIPELINE_SLUGS: tuple[str, ...] = tuple(_TEMPLATES.keys())
+# Pipeline slugs that ship as part of the post-activation samples grid
+# (live_simulation is generated on-demand, not batched).
+PIPELINE_SLUGS: tuple[str, ...] = tuple(s for s in _TEMPLATES.keys() if s != "live_simulation")
