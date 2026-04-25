@@ -55,22 +55,59 @@ def _load_env_file(path: Path) -> None:
             os.environ[k] = v
 
 
-def _clear_tenant_files(tenant_id: str, *, dry_run: bool) -> list[str]:
-    """Remove demo state files. Returns a list of what would be / was removed."""
+def _clear_tenant_files(
+    tenant_id: str,
+    *,
+    dry_run: bool,
+    include_credentials: bool = False,
+) -> list[str]:
+    """Remove demo state files. Returns a list of what would be / was removed.
+
+    Wipes everything the activation wizard produces so a fresh run starts
+    from zero:
+      - All KB sections (company, services, voice, policies, pricing, faq,
+        known_contacts, existing_stack, provisioning_plan, crm_mapping)
+      - State snapshots (voice_card.json, crm_mapping.json,
+        provisioning_plan.json)
+      - activation.json (resets every ring to 'not started')
+      - agent_session.json (drops the cached Managed Agents session id so
+        the agent starts a new conversation)
+      - samples/ directory
+
+    Does NOT touch credentials/ by default. Pass include_credentials=True
+    to also wipe Google OAuth tokens and force re-OAuth on the next run.
+    """
     # Import inside so --dry-run without TENANT_ROOT set still works without
     # touching the real production directory.
-    from dashboard_app.services import heartbeat_store
+    from dashboard_app.services import heartbeat_store, tenant_kb
 
     try:
         root = heartbeat_store.tenant_root(tenant_id)
     except heartbeat_store.HeartbeatError as exc:
         raise SystemExit(f"bad tenant_id {tenant_id!r}: {exc}")
-    targets = [
-        root / "kb" / "existing_stack.md",
-        root / "kb" / "provisioning_plan.md",
+
+    # Every whitelisted KB section. Pulling from tenant_kb keeps this list
+    # in sync automatically as new sections get added to SECTIONS.
+    kb_targets = [root / "kb" / f"{section}.md" for section in sorted(tenant_kb.SECTIONS)]
+
+    state_targets = [
+        root / "state_snapshot" / "voice_card.json",
+        root / "state_snapshot" / "crm_mapping.json",
         root / "state_snapshot" / "provisioning_plan.json",
-        root / "agent_session.json",
     ]
+
+    other_targets = [
+        root / "agent_session.json",
+        root / "activation.json",  # ring grid; deleting resets every role
+    ]
+
+    targets = kb_targets + state_targets + other_targets
+
+    if include_credentials:
+        targets.extend([
+            root / "credentials" / "google.json",
+        ])
+
     dirs = [root / "samples"]
     removed: list[str] = []
 
@@ -162,6 +199,24 @@ def main(argv: list[str] | None = None) -> int:
         default=os.getenv("WCAS_LOGIN_URL", "https://dashboard.westcoastautomationsolutions.com/auth/login"),
         help="Login URL to print for Itzel (default: production).",
     )
+    parser.add_argument(
+        "--include-credentials",
+        action="store_true",
+        help=(
+            "HARD reset: also delete Google OAuth credentials so the next "
+            "wizard run forces re-OAuth. Default keeps credentials so you "
+            "can iterate on the wizard without re-authing every time."
+        ),
+    )
+    parser.add_argument(
+        "--reset-only",
+        action="store_true",
+        help=(
+            "Skip Airtable updates entirely and only wipe filesystem state. "
+            "Use this for fast iteration between local test runs once the "
+            "Airtable row is already in the right shape."
+        ),
+    )
     args = parser.parse_args(argv)
 
     _load_env_file(Path(args.env_file))
@@ -170,24 +225,34 @@ def main(argv: list[str] | None = None) -> int:
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
 
-    print(f"[seed_garcia] tenant_id = {TENANT_ID}")
-    print(f"[seed_garcia] email     = {args.email}")
-    print(f"[seed_garcia] dry_run   = {args.dry_run}")
+    print(f"[seed_garcia] tenant_id           = {TENANT_ID}")
+    print(f"[seed_garcia] email               = {args.email}")
+    print(f"[seed_garcia] dry_run             = {args.dry_run}")
+    print(f"[seed_garcia] include_credentials = {args.include_credentials}")
+    print(f"[seed_garcia] reset_only          = {args.reset_only}")
     print()
 
     # --- Airtable row --------------------------------------------------------
-    at_result = _update_airtable_row(
-        args.email, create_if_missing=args.create_row, dry_run=args.dry_run
-    )
-    print(f"[seed_garcia] airtable: {at_result['action']}")
-    if "record_id" in at_result:
-        print(f"[seed_garcia]   record_id = {at_result['record_id']}")
-    for k, v in at_result["fields"].items():
-        print(f"[seed_garcia]   {k}: {v!r}")
-    print()
+    if args.reset_only:
+        print("[seed_garcia] airtable: SKIPPED (--reset-only)")
+        print()
+    else:
+        at_result = _update_airtable_row(
+            args.email, create_if_missing=args.create_row, dry_run=args.dry_run
+        )
+        print(f"[seed_garcia] airtable: {at_result['action']}")
+        if "record_id" in at_result:
+            print(f"[seed_garcia]   record_id = {at_result['record_id']}")
+        for k, v in at_result["fields"].items():
+            print(f"[seed_garcia]   {k}: {v!r}")
+        print()
 
     # --- Filesystem cleanup --------------------------------------------------
-    removed = _clear_tenant_files(TENANT_ID, dry_run=args.dry_run)
+    removed = _clear_tenant_files(
+        TENANT_ID,
+        dry_run=args.dry_run,
+        include_credentials=args.include_credentials,
+    )
     if removed:
         label = "would remove" if args.dry_run else "removed"
         print(f"[seed_garcia] filesystem: {label} {len(removed)} item(s)")
