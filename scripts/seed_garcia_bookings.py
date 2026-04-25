@@ -155,10 +155,15 @@ def _make(block: str, parent_first: str, parent_last: str, child: str,
 
 
 def _existing_seed_ids(table) -> list[str]:
-    """Return record ids whose Notes field contains the seed tag."""
+    """Return record ids whose Notes field contains the seed tag.
+
+    `table.all()` returns a flat list. Earlier draft used `.iterate()`
+    which yields *lists per page* in this pyairtable version - that
+    crashes with AttributeError when treated as individual records.
+    """
     ids = []
-    for rec in table.iterate(page_size=100, fields=["Notes"]):
-        notes = (rec.get("fields", {}).get("Notes") or "")
+    for rec in table.all(fields=["Notes"]):
+        notes = ((rec.get("fields") or {}).get("Notes") or "")
         if SEED_TAG in notes:
             ids.append(rec["id"])
     return ids

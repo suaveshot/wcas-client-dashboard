@@ -72,11 +72,13 @@ def test_fetch_schema_returns_tables_and_scrubbed_records(tmp_path, monkeypatch)
     fake_base.schema.return_value = fake_schema
 
     fake_table = MagicMock()
+    # .all() is now used for BOTH row count and sample fetch (iterate yielded
+    # pages not records in this pyairtable version, broke row_count). Return
+    # 2 rows so the row_count assertion below picks up 2.
     fake_table.all.return_value = [
         {"id": "rec1", "fields": {"Email": "real@example.com", "Phone": "(805) 555-1234"}},
+        {"id": "rec2", "fields": {"Email": "other@example.com"}},
     ]
-    # iterate is used to count rows; yield two records.
-    fake_table.iterate.return_value = iter([{"id": "r1"}, {"id": "r2"}])
 
     fake_api = MagicMock()
     fake_api.base.return_value = fake_base

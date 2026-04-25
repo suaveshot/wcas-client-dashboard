@@ -155,13 +155,14 @@ def fetch_schema(tenant_id: str, base_id: str) -> dict[str, Any]:
         except Exception as exc:  # individual table failure shouldn't kill the whole call
             log.warning("sample fetch failed tenant=%s table=%s: %s", tenant_id, name, exc)
 
-        # row_count: pyairtable doesn't expose this directly without listing, so
-        # we approximate by paging once with a small page_size. For Garcia's
-        # bookings (target ~30-50 rows post-seed) this is cheap.
+        # row_count: pyairtable's iterate() yields PAGES (lists) not records,
+        # which made the previous sum(1 for _ in iterate()) return page count
+        # not record count. all() returns a flat list; for Garcia's bookings
+        # (~30 rows post-seed) it's cheap and accurate.
         row_count = 0
         try:
             t = api.table(base_id, name)
-            row_count = sum(1 for _ in t.iterate(page_size=100))
+            row_count = len(t.all(fields=[]))
         except Exception as exc:
             log.warning("row count failed tenant=%s table=%s: %s", tenant_id, name, exc)
 
