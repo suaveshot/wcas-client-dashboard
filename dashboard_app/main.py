@@ -394,10 +394,43 @@ def _sidebar_stub(request: Request, title: str, body: str) -> HTMLResponse:
 
 @app.get("/roles", response_class=HTMLResponse)
 async def roles_page(request: Request):
-    return _sidebar_stub(
+    sess = current_session(request)
+    preview = os.getenv("PREVIEW_MODE", "false").lower() == "true"
+    if sess is None and not preview:
+        return RedirectResponse(url="/auth/login", status_code=303)
+    tenant_id = sess["tid"] if sess else "americal_patrol"
+
+    from .services import heartbeat_store as _hb
+    raw_snaps = _hb.read_all(tenant_id)
+    role_rows = []
+    for snap in raw_snaps:
+        pid = snap.get("pipeline_id", "")
+        if not pid:
+            continue
+        payload = snap.get("payload") or {}
+        last_run_iso = payload.get("last_run") or snap.get("received_at", "")
+        last_run_text, age_hours = home_context._humanize_ago(last_run_iso)
+        state, _state_text, _grade, _spark = home_context._state_from_status(
+            payload.get("status", ""), age_hours
+        )
+        role_rows.append({
+            "slug": pid.replace("_", "-"),
+            "name": home_context._role_display(pid),
+            "state": state,
+            "last_run": last_run_text,
+            "last_action": payload.get("last_action") or payload.get("summary") or "",
+            "run_count": int(payload.get("run_count") or 0),
+        })
+    role_rows.sort(key=lambda r: r["name"])
+
+    return templates.TemplateResponse(
         request,
-        "Roles",
-        "The all-roles index opens Day 3. For now, tap a role card on your home screen to see its live status and ask a question about it.",
+        "roles.html",
+        {
+            "tenant_id": tenant_id,
+            "tenant_name": home_context._display_from_slug(tenant_id),
+            "roles": role_rows,
+        },
     )
 
 

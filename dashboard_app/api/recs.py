@@ -19,17 +19,70 @@ Error mapping for the front-end toast:
 
 from __future__ import annotations
 
+import json
 import logging
+import re
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
-from ..services import opus, rate_limit, recs_generator, recs_store
+from ..services import audit_log, heartbeat_store, opus, rate_limit, recs_generator, recs_store
 from ..services.tenant_ctx import require_tenant
 
 log = logging.getLogger("dashboard.api.recs")
 
 router = APIRouter(tags=["recommendations"])
+
+_SAFE_REC_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,127}$", re.IGNORECASE)
+_ALLOWED_ACTIONS = {"apply", "dismiss"}
+
+
+def _actions_path(tenant_id: str):
+    return heartbeat_store.tenant_root(tenant_id) / "rec_actions.jsonl"
+
+
+@router.post("/api/recommendations/{rec_id}/act")
+async def api_recs_act(
+    rec_id: str,
+    body: dict = Body(default_factory=dict),
+    tenant_id: str = Depends(require_tenant),
+) -> JSONResponse:
+    """Record an Apply or Dismiss action against a recommendation.
+
+    Persists one JSONL row to rec_actions.jsonl plus an audit log entry.
+    Returns the recorded entry so the UI can display the chosen action
+    in its undo toast.
+    """
+    if not _SAFE_REC_ID.match(rec_id or ""):
+        raise HTTPException(status_code=400, detail="invalid rec_id")
+    action = (body.get("action") or "").strip().lower()
+    if action not in _ALLOWED_ACTIONS:
+        raise HTTPException(status_code=400, detail="action must be apply or dismiss")
+
+    entry = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "rec_id": rec_id,
+        "action": action,
+    }
+
+    try:
+        path = _actions_path(tenant_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, separators=(",", ":")) + "\n")
+    except OSError:
+        log.exception("rec_actions write failed for tenant=%s rec=%s", tenant_id, rec_id)
+        raise HTTPException(status_code=500, detail="Could not save action")
+
+    audit_log.record(
+        tenant_id=tenant_id,
+        event=f"recommendation_{action}",
+        ok=True,
+        rec_id=rec_id,
+    )
+
+    return JSONResponse({"ok": True, "rec_id": rec_id, "action": action, "ts": entry["ts"]})
 
 
 @router.post("/api/recommendations/refresh")

@@ -916,6 +916,17 @@
         });
     }
 
+    // Public API: other scripts (rec_actions.js, etc) can open the palette
+    // pre-filled with a question via window.apShell.openPalette('? text').
+    window.apShell = {
+        openPalette: openPalette,
+        closePalette: closePalette,
+    };
+    document.addEventListener('ap-open-palette', function (e) {
+        var prefix = (e && e.detail && e.detail.prefix) || '';
+        openPalette(prefix);
+    });
+
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', boot);
     } else {

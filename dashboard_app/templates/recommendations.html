@@ -71,16 +71,18 @@
 
                 <div class="ap-recs-list" data-tab="live">
                     {% for rec in live_recs %}
-                    <article class="ap-rec-full">
+                    <article class="ap-rec-full" data-rec-id="{{ rec.id or ('rec-' ~ loop.index) }}">
                         {% if rec.goal %}<span class="ap-goal-chip">GOAL: {{ rec.goal }}</span>{% endif %}
                         <h3 class="ap-rec__headline">{{ rec.headline }}</h3>
                         <p class="ap-rec__reason">{{ rec.reason }}</p>
+                        {% if rec.proposed_tool or rec.confidence or rec.reversibility or rec.impact %}
                         <dl class="ap-rec-full__meta">
-                            <div><dt>Tool</dt><dd>{{ rec.proposed_tool }}</dd></div>
-                            <div><dt>Confidence</dt><dd>{{ rec.confidence }}/10</dd></div>
-                            <div><dt>Reversibility</dt><dd>{{ rec.reversibility }}</dd></div>
-                            <div><dt>Impact</dt><dd>{{ rec.impact.estimate }} {{ rec.impact.unit }}</dd></div>
+                            {% if rec.proposed_tool %}<div><dt>Tool</dt><dd>{{ rec.proposed_tool }}</dd></div>{% endif %}
+                            {% if rec.confidence %}<div><dt>Confidence</dt><dd>{{ rec.confidence }}/10</dd></div>{% endif %}
+                            {% if rec.reversibility %}<div><dt>Reversibility</dt><dd>{{ rec.reversibility }}</dd></div>{% endif %}
+                            {% if rec.impact %}<div><dt>Impact</dt><dd>{{ rec.impact.estimate }} {{ rec.impact.unit }}</dd></div>{% endif %}
                         </dl>
+                        {% endif %}
                         {% if rec.evidence %}
                         <details class="ap-rec-full__evidence">
                             <summary>Evidence</summary>
@@ -91,6 +93,22 @@
                             </ul>
                         </details>
                         {% endif %}
+                        <div class="ap-rec__footer" style="margin-top: 16px;">
+                            <div class="ap-btn-group">
+                                <button class="ap-btn ap-btn--primary" type="button" data-rec-action="apply">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+                                    Apply
+                                </button>
+                                <button class="ap-btn ap-btn--ghost" type="button" data-rec-action="dismiss">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                    Dismiss
+                                </button>
+                                <button class="ap-btn ap-btn--ghost ap-btn--spark" type="button" data-rec-action="ask">
+                                    <span aria-hidden="true" style="color:var(--accent);font-size:14px;">✦</span>
+                                    Ask
+                                </button>
+                            </div>
+                        </div>
                     </article>
                     {% else %}
                     <div class="ap-rec-empty">
@@ -118,8 +136,9 @@
     </div>
 </div>
 <div class="ap-toast-stack" aria-live="polite" aria-atomic="true"></div>
-<script src="/static/undo.js?v=20260423a" defer></script>
-<script src="/static/shell.js?v=20260423a" defer></script>
-<script src="/static/recommendations.js?v=20260423a" defer></script>
+<script src="/static/undo.js?v=20260426a" defer></script>
+<script src="/static/shell.js?v=20260426a" defer></script>
+<script src="/static/recommendations.js?v=20260426a" defer></script>
+<script src="/static/rec_actions.js?v=20260426a" defer></script>
 </body>
 </html>

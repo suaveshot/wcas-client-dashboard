@@ -291,7 +291,7 @@
 
                     <div class="ap-rec-stack">
                         {% for rec in recommendations %}
-                        <article class="ap-rec">
+                        <article class="ap-rec" data-rec-id="{{ rec.id or ('rec-' ~ loop.index) }}">
                             {% if rec.goal %}
                             <span class="ap-goal-chip">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
@@ -302,15 +302,15 @@
                             <p class="ap-rec__reason">{{ rec.reason }}</p>
                             <div class="ap-rec__footer">
                                 <div class="ap-btn-group">
-                                    <button class="ap-btn ap-btn--primary" type="button">
+                                    <button class="ap-btn ap-btn--primary" type="button" data-rec-action="apply">
                                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
                                         Apply
                                     </button>
-                                    <button class="ap-btn ap-btn--ghost" type="button">
+                                    <button class="ap-btn ap-btn--ghost" type="button" data-rec-action="dismiss">
                                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                                         Dismiss
                                     </button>
-                                    <button class="ap-btn ap-btn--ghost ap-btn--spark" type="button">
+                                    <button class="ap-btn ap-btn--ghost ap-btn--spark" type="button" data-rec-action="ask">
                                         <span aria-hidden="true" style="color:var(--accent);font-size:14px;">✦</span>
                                         Ask
                                     </button>
@@ -341,8 +341,9 @@
     {# toasts injected here by undo.js #}
 </div>
 
-<script src="/static/undo.js?v=20260422d" defer></script>
-<script src="/static/shell.js?v=20260422d" defer></script>
+<script src="/static/undo.js?v=20260426a" defer></script>
+<script src="/static/shell.js?v=20260426a" defer></script>
+<script src="/static/rec_actions.js?v=20260426a" defer></script>
 
 </body>
 </html>
