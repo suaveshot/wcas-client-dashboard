@@ -136,6 +136,7 @@ async def request_magic_link(request: Request, email: str = Form(...)) -> HTMLRe
                     subject="Your dashboard sign-in link",
                     html_body=html_body,
                     text_body=text_body,
+                    channel="magic_link",
                 )
             except (email_sender.EmailSendError, RuntimeError):
                 log.exception("magic link send failed for %s", scrub(email_clean))

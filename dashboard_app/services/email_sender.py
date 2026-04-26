@@ -6,10 +6,24 @@ Americal Patrol's email assistant - these one-shot sends don't need
 a refreshable credential, and the dashboard lives in a Docker
 container with no browser to re-auth.
 
-Set in .env:
-    SUPPORT_EMAIL_FROM = americalpatrol@gmail.com
-    GMAIL_APP_PASSWORD = 16-char Gmail app password
-    SUPPORT_EMAIL_TO = sam@westcoastautomationsolutions.com
+Two channels with separate credentials so client-facing magic links
+ride a high-reputation mailbox while internal Sam alerts can come from
+the WCAS-branded mailbox even before it's earned reputation:
+
+    Channel "magic_link" (client-facing sign-in links)
+        MAGIC_LINK_EMAIL_FROM        = americalpatrol@gmail.com
+        MAGIC_LINK_GMAIL_APP_PASSWORD
+
+    Channel "support" (default; alert_sam, Ask Sam notifications)
+        SUPPORT_EMAIL_FROM           = westcoastautomationsolutions@gmail.com
+        GMAIL_APP_PASSWORD
+
+    SUPPORT_EMAIL_TO = sam@westcoastautomationsolutions.com (alert recipient)
+
+Gmail SMTP authenticates as the FROM address and rewrites the From
+header to that account, so each channel's password must belong to its
+own mailbox. If MAGIC_LINK_* vars are unset the magic-link channel
+falls back to the support credentials.
 
 Templates are Jinja2 HTML + plain-text twins. MIME multipart/alternative
 so clients that strip HTML still get a usable body.
@@ -30,12 +44,31 @@ class EmailSendError(RuntimeError):
     pass
 
 
-def send_html(to_email: str, subject: str, html_body: str, text_body: str) -> None:
-    """Send a multipart/alternative email. Raises EmailSendError on failure."""
-    sender = os.getenv("SUPPORT_EMAIL_FROM", "")
-    password = os.getenv("GMAIL_APP_PASSWORD", "")
+def _credentials(channel: str) -> tuple[str, str]:
+    """Resolve (sender, password) for a channel; magic_link falls back to support."""
+    if channel == "magic_link":
+        sender = os.getenv("MAGIC_LINK_EMAIL_FROM") or os.getenv("SUPPORT_EMAIL_FROM", "")
+        password = os.getenv("MAGIC_LINK_GMAIL_APP_PASSWORD") or os.getenv("GMAIL_APP_PASSWORD", "")
+        return sender, password
+    return os.getenv("SUPPORT_EMAIL_FROM", ""), os.getenv("GMAIL_APP_PASSWORD", "")
+
+
+def send_html(
+    to_email: str,
+    subject: str,
+    html_body: str,
+    text_body: str,
+    *,
+    channel: str = "support",
+) -> None:
+    """Send a multipart/alternative email. Raises EmailSendError on failure.
+
+    `channel="magic_link"` routes via the high-reputation client-facing
+    mailbox. Default `"support"` routes via the internal alert mailbox.
+    """
+    sender, password = _credentials(channel)
     if not sender or not password:
-        raise EmailSendError("SUPPORT_EMAIL_FROM or GMAIL_APP_PASSWORD missing")
+        raise EmailSendError(f"sender or password missing for channel={channel!r}")
 
     msg = MIMEMultipart("alternative")
     msg["From"] = sender
@@ -49,7 +82,7 @@ def send_html(to_email: str, subject: str, html_body: str, text_body: str) -> No
             smtp.login(sender, password)
             smtp.sendmail(sender, [to_email], msg.as_string())
     except (smtplib.SMTPException, OSError) as exc:
-        log.exception("email send failed to=%s subject=%r", to_email, subject)
+        log.exception("email send failed to=%s subject=%r channel=%s", to_email, subject, channel)
         raise EmailSendError(str(exc)) from exc
 
 
