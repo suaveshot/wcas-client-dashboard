@@ -187,6 +187,36 @@ async def dev_login(tenant: str = "americal_patrol") -> RedirectResponse:
     return response
 
 
+@app.post("/auth/judge")
+async def judge_demo_login() -> RedirectResponse:
+    """Hackathon judge bypass: mint a session as Garcia Folklorico and skip
+    the magic-link email step. Public, idempotent, single hardcoded tenant.
+    """
+    from .services import (
+        activation_state as _astate,
+        audit_log as _audit,
+        sessions as _sessions,
+    )
+
+    tenant_id = "garcia_folklorico"
+    email = "judge@claudejudge.com"
+    role = "client"
+
+    cookie_value = _sessions.issue(tenant_id=tenant_id, email=email, role=role)
+    landing = "/dashboard" if _astate.is_complete(tenant_id) else "/activate"
+
+    _audit.record(
+        tenant_id=tenant_id,
+        event="judge_demo_session_issued",
+        ok=True,
+        actor_email=email,
+    )
+
+    response = RedirectResponse(url=landing, status_code=303)
+    response.set_cookie(value=cookie_value, **_sessions.cookie_kwargs())
+    return response
+
+
 # Ring grid roster lives in services/roster.py so main.py, api/activation_chat.py,
 # and anything else that renders the 7-ring grid share one source of truth.
 

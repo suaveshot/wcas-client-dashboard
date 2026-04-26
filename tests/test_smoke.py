@@ -49,6 +49,35 @@ def test_dev_login_rejects_invalid_tenant(monkeypatch):
     assert r.status_code == 400
 
 
+def test_judge_demo_redirects_to_activate(tmp_path, monkeypatch):
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    fresh = TestClient(app)
+    r = fresh.post("/auth/judge", follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"] == "/activate"
+    assert "wcas_session=" in r.headers.get("set-cookie", "")
+
+
+def test_judge_demo_session_is_garcia_folklorico(tmp_path, monkeypatch):
+    from dashboard_app.services import sessions
+
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    fresh = TestClient(app)
+    r = fresh.post("/auth/judge", follow_redirects=False)
+    assert r.status_code == 303
+    cookie = fresh.cookies.get("wcas_session")
+    assert cookie, "judge route did not set wcas_session cookie"
+    payload = sessions.verify(cookie)
+    assert payload is not None
+    assert payload["tid"] == "garcia_folklorico"
+    assert payload["rl"] == "client"
+
+
+def test_judge_demo_get_returns_405():
+    r = client.get("/auth/judge", follow_redirects=False)
+    assert r.status_code == 405
+
+
 def test_activate_requires_auth():
     # /activate is behind require_tenant as of Day 4. Anonymous hits
     # land on /auth/login via the 401 redirect handler.

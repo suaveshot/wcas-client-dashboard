@@ -7,11 +7,12 @@ tenant data unless you pick the demo-mode path.
 
 **Live URL:** https://dashboard.westcoastautomationsolutions.com
 
-**Try as a judge:** click *Try as a judge* on the landing page. That POSTs
-your email to the magic-link endpoint (we pre-seeded `demo@claudejudge.com`
-in Airtable, so the link flows to you).
+**Try as a judge:** click *Try as a judge* on the landing page. The button
+POSTs to `/auth/judge`, which mints a session as Garcia Folklorico and
+drops you straight into the live `/activate` wizard. No email, no magic
+link, no inbox detour.
 
-If you want to skip email:
+If you want different data behind the cards:
   * `PREVIEW_MODE=true` on the server renders a static 14-role mock against
     the hand-crafted Americal Patrol data for demo-video recording.
   * Otherwise you're looking at live telemetry pushed from Sam's PC over
