@@ -1028,3 +1028,107 @@ Hero is "Maria Sanchez" - registered 120 days ago, sorts FIRST when the agent re
 - `mark_accepted` returning the updated payload (instead of a bool) made the tests trivially explicit about what changed.
 - Intro carousel sits OUTSIDE the React-less wizard chrome; pure HTML overlay + ~140 lines of vanilla JS. Took less time than picking the dot indicator color.
 - The `live_simulation` template carries `persist=False` so the demo finale doesn't pollute the saved samples directory. One flag, two semantics.
+
+---
+
+# Entry 17 - 2026-04-25 evening (Day 6 evening, 0.7.0 LIVE)
+
+**Status:** 0.7.0 deployed to prod. 339 tests passing (was 340; one stub-tool test deleted in `666b25e` cleanup). Two cinematic /demo routes shipped; live /activate received bezel rings + activated-badge celebration + voice-card hooks.
+
+## Why this entry exists
+
+Sam pulled two zips from Claude Design (claude.ai/design) tonight: `WCAS Hackathon activation demo.zip` and `WCAS Hackathon dashboard demo.zip` (identical bundles, both contain BOTH cinematics). Two scripted prototypes built for video recording: a 5-scene activation cinematic (V2 of the morning's handoff, with copy upgrades from Mariana to Itzel and richer voice card content) and a NEW 6-scene dashboard cinematic (Morning brief through End of day, with speaker notes embedded as inline JSON for the narrator).
+
+Sam picked "Both: ship /demo for recording AND backport polish into live /activate." Six tasks, ~3 hours, deployed to prod by midnight.
+
+## What shipped
+
+### Part A - cinematic /demo routes (verbatim ports)
+
+Three new FastAPI routes, all auth-free, all serve scoped HTML+JS+CSS that runs entirely client-side:
+
+- `GET /demo` → 303 → `/demo/activation`
+- `GET /demo/activation` → 5-scene activation cinematic (tool calls, voice card side-by-side, live email + receipts, all-rings-closed, dashboard handoff)
+- `GET /demo/dashboard` → 6-scene dashboard cinematic (morning brief, approve reply, reviews drilldown, apply rec, Ask · Tuesday slow, end of day)
+
+Files created:
+- `templates/demo_activation.html` (952 lines, V2 from Claude Design)
+- `templates/demo_dashboard.html` (836 lines, NEW from Claude Design, includes inline `<script type="application/json" id="speaker-notes">` block with per-scene narration cues)
+- `static/demo/tokens.css` (scoped under `body.wcas-demo` so Plus Jakarta Sans + warm cream tokens never bleed into live `/dashboard` or `/activate`)
+- `static/demo/ring-data.js` (shared vendor SVGs + ring metadata, used by both cinematics)
+- `static/demo/activation.js` (~1218 lines, scene choreography + faux cursor + autoplay + WebAudio sound + tweaks panel)
+- `static/demo/dashboard.js` (~861 lines, sister choreography for the 6-scene daily story)
+
+Em-dash scrub: 77 occurrences across the bundle (29 in activation.js, 25 in dashboard.js, 18 in dashboard.html, 7 in activation.html, 1 in ring-data.js comment scrubbed to plain hyphen, JSON speaker-notes used `—` escapes to stay parseable). One-shot `dashboard_app/scripts/scrub_demo_em_dashes.py` did the heavy lift then was deleted before commit per plan.
+
+Routes added in `main.py` after the `/activate` block. No auth gate, no tenant - pure scripted prototype designed for the recording.
+
+### Part B - live /activate polish (visible to anyone clicking out of the recording)
+
+Three changes, no backend touched:
+
+1. **Bezel rings** (replaces bare 36 px logo tiles). Each ring is now a 68 px cream chip + animated SVG arc that fills as the role advances `credentials → config → connected → first_run`. Server-side Jinja computes `stroke-dashoffset = (251.33 * (4 - completed)) / 4` so non-JS users see the right ring fill on first paint. JS recomputes on each poll. Arc flips green at `first_run`. ~50 lines added to `templates/activate.html`, ~250 lines added to `styles.css`, `applyRingArc(ringEl, step)` added to `activate.js`.
+
+2. **Just-closed pop + activated celebration.** When a ring transitions to `first_run`, JS fires a 700 ms spring-scale pop. When ALL rings hit `first_run`, JS toggles `.ap-activate-rings--celebrating` on the parent → gold halo + 28-confetti shower (`spawnConfetti(layer)`) + "All N roles activated" badge with elapsed time (computed from `sessionStorage.wcas_activation_started_at`). One-shot per session via `sessionStorage.wcas_activation_celebrated`. Markup containers added inside `.ap-activate-rings`; CSS keyframes (`ap-halo-shimmer`, `ap-confetti-fall`) added to `styles.css`.
+
+3. **Voice-card CSS hooks.** `.voice-card`, `.voice-grid`, `.voice-col`, `.voice-line`, `.src` styles + `.ap-src-tip` dark hover tooltip ported from the cinematic. Dormant until the agent emits `<div class="voice-card">…</div>` markup in a chat message - safer than rewriting the agent prompt 24 hours before submission. `wireVoiceCardTooltip()` listens for hover on any `.src` element with `data-src-q` + `data-src-label` and positions the tip.
+
+### Bug fix bonus
+
+`tests/test_no_em_dashes_in_source` was scanning `node_modules/` and the local `hackathon demo video/` Remotion project (which Sam keeps in the repo dir for video editing but never commits). Both were tripping the test with em dashes in third-party READMEs. Added both to the skip list. This was a pre-existing latent bug; our changes just exposed it because we ran the suite end-to-end before commit.
+
+## Files touched
+
+**New (6):**
+- `templates/demo_activation.html`
+- `templates/demo_dashboard.html`
+- `static/demo/tokens.css`
+- `static/demo/ring-data.js`
+- `static/demo/activation.js`
+- `static/demo/dashboard.js`
+
+**Modified (6):**
+- `main.py` (3 new `/demo*` routes + version 0.6.0 → 0.7.0)
+- `templates/activate.html` (bezel SVG arc inside ring visual + celebration markup containers + src-tip element + cache-buster `v=20260425e` → `v=20260425g`)
+- `templates/home.html` (cache-buster bump)
+- `static/styles.css` (~250 lines appended in a `/* HACKATHON v0.7.0 polish */` section)
+- `static/activate.js` (`applyRingArc`, `checkActivationComplete`, `spawnConfetti`, `wireVoiceCardTooltip` + sessionStorage celebration gate)
+- `tests/test_smoke.py` (skip list expanded for `node_modules` + `hackathon demo video`)
+
+**Deleted (throwaway):**
+- `dashboard_app/scripts/scrub_demo_em_dashes.py` (one-shot scrubber, served its purpose, removed per plan)
+
+## Stats
+
+- 339/339 tests pass (3.4s suite). No new tests added for this work - pure UI polish hours before submission, manual browser checks were the safety net.
+- Commit `7536884` on `voice-and-data-pivot-0.6.0`. 12 files changed, 4518 insertions, 9 deletions.
+- VPS deploy: `ssh garcia-vps 'cd /docker/wcas-dashboard/app && git pull && cd .. && docker compose up -d --build'`. Container rebuilt cleanly, `/healthz` flipped to `0.7.0`.
+
+## Prod smoke (passed 2026-04-25 ~9pm)
+
+- `/healthz` → `{"status":"ok","version":"0.7.0"}`
+- `/demo` → 303 → `/demo/activation`
+- `/demo/activation` → 200, 56 KB
+- `/demo/dashboard` → 200, 51 KB
+- `/static/demo/tokens.css` → 200
+- `/static/demo/activation.js` → 200, 50 KB
+- `/static/demo/dashboard.js` → 200, 35 KB
+- `/activate` → 303 to `/auth/login` (auth gate intact)
+- `/dashboard` → 303 to `/auth/login` (auth gate intact, CSS scoping confirmed - no token bleed from `/demo`)
+
+## Recording plan
+
+1. Open `https://dashboard.westcoastautomationsolutions.com/demo/activation` for the first half of the video (the setup story).
+2. Switch to `/demo/dashboard` for the daily-product half.
+3. Speaker notes are inline in `/demo/dashboard` view-source (6 cues, one per scene). Use them as the narrator script.
+4. (Optional) Cut to live `/activate` for 5-10 seconds after the rings celebration in the cinematic to show "this isn't a mockup, the real product looks the same."
+5. Saturday Apr 26 = video cut + submission.
+
+## Surprising bits this session
+
+- The handoff bundle's `tokens.css` redefines `--bg`, `--ink`, `--accent` at `:root`. If served unscoped it would have nuked the live app's color palette. Wrapping every declaration under `body.wcas-demo` made the demo CSS a complete no-op outside the `/demo/*` pages. The inline `<style>` blocks in the demo HTMLs use unprefixed selectors (`.activate`, `.dash`, `.scene-btn`) which are safe because they only load on those two pages.
+- The em-dash scrubber needed three different strategies: JS string concatenation via `String.fromCharCode(0x2014)` for `.js` files, HTML entity `&#8212;` for HTML body text, and JSON `—` escapes inside the inline speaker-notes block (so the JSON stays valid for any future page-script that parses it). Got 77 dashes in one pass.
+- The `wcas_activation_celebrated` sessionStorage gate means refreshing the page after activation completes will NOT replay the celebration. That's intentional - it's a one-time delight on the real transition, not a "always show on page load" thing. For the recording Sam can clear the key in devtools if he wants to re-shoot the moment.
+- The cinematic dashboard pulls Source Serif 4 + Inter + JetBrains Mono in addition to Plus Jakarta Sans (per its own `<link>` tag). Different typography from the rest of the dashboard product surface - intentional design choice by Claude Design for the cinematic's editorial feel.
+- The bezel arc circumference is `2π·40 = 251.33`. Memorizing that constant felt silly; computing it inline in the Jinja template via `((251.33 * (4 - completed)) / 4)|round(2)` made the arc fill correctly even before JS hydration.
+- Pre-commit hook caught zero em dashes - all 77 were scrubbed cleanly before staging. The hook's existence made the bulk-port safe; without it we'd have shipped a brand-rule violation at midnight.
