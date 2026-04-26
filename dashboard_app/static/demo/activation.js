@@ -372,22 +372,22 @@
   const VOICE = [
     { lbl:'Tone',         tokens:[
         { t:'Like a ', src:null },
-        { t:'tia who runs a tight kitchen', src:{ kind:'about', q:'I run this place like my abuela ran her kitchen ' + String.fromCharCode(0x2014) + ' with love, and a clipboard.', label:'About page · paragraph 3' } },
+        { t:'tía who gives you the abuela treatment in class', src:{ kind:'about', q:'I run this studio like my abuela ran her zapateado classes. With love, and a clipboard.', label:'About page · paragraph 3' } },
         { t:'. ', src:null },
-        { t:'Specific over polished', src:{ kind:'reviews', q:'Itzel told us exactly which dance we were watching and why it mattered ' + String.fromCharCode(0x2014) + ' no fluff.', label:'5★ review · L. Ortiz · Mar 2026' } },
+        { t:'Specific over polished', src:{ kind:'reviews', q:'Itzel told us exactly which dance we were watching and why it mattered. No fluff.', label:'5★ review · L. Ortiz · Mar 2026' } },
         { t:'.', src:null }
       ]},
     { lbl:'Signature',    tokens:[
-        { t:'“', src:null },
-        { t:'' + String.fromCharCode(0x2014) + ' Itzel & the Folklorico crew', src:{ kind:'about', q:"I'm Itzel, and this is the Folklorico crew I've built over 14 years.", label:'About page · paragraph 1' } },
+        { t:'“abrazos, ', src:null },
+        { t:'Itzel & the Folklorico crew', src:{ kind:'about', q:"I'm Itzel, and this is the Folklorico crew I've built over 14 years.", label:'About page · paragraph 1' } },
         { t:'” ', src:null },
         { t:'(she signs every email this way)', src:null }
       ]},
     { lbl:'Sample reply', tokens:[
-        { t:'“Lucia ' + String.fromCharCode(0x2014) + ' ', src:null },
-        { t:'tell your hermana we said hi', src:{ kind:'reviews', q:'Itzel asked about my sister by name. Who does that?', label:'Yelp review · May 2026' } },
+        { t:'“Lucia, ', src:null },
+        { t:'tell your hermana we said hi', src:{ kind:'reviews', q:'Itzel still asks about my hermana by name. Three years in and that kind of memory floors me.', label:'Yelp review · May 2026' } },
         { t:'. ', src:null },
-        { t:'Saturday at 7, table by the window', src:{ kind:'reviews', q:"17 of her replies end with a specific time and a specific table.", label:'Reviews · phrase cluster #2' } },
+        { t:"Saturday at 11, jarabe class. Door's open at 10:45 if you want to warm up", src:{ kind:'reviews', q:"17 of her replies confirm a class time with a personal detail like 'come early to warm up.'", label:'Reviews · phrase cluster #2' } },
         { t:'.”', src:null }
       ]}
   ];

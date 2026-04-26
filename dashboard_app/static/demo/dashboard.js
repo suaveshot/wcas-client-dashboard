@@ -192,9 +192,9 @@
   /* feed events (most recent first) */
   const FEED = [
     { dot:'ok', t:'6 min ago',  body:'Replied to Yelp review from Tomás L. <span style="color:var(--ink-faint)">"Saturday show, brought my mom."</span>' },
-    { dot:'',   t:'14 min ago', body:'Booked May 3 · Maria Sanchez · party of 8' },
+    { dot:'',   t:'14 min ago', body:'Booked May 3 · Maria Sanchez · private class for 8' },
     { dot:'ok', t:'42 min ago', body:'Updated Google Business hours for the May 3 event' },
-    { dot:'',   t:'1 hr ago',   body:'Drafted blog post: <em>"Spring tasting menu " + String.fromCharCode(0x2014) + " 6 dishes from 3 abuelas"</em>' },
+    { dot:'',   t:'1 hr ago',   body:'Drafted blog post: <em>"Spring program: 6 dances from 3 abuelas"</em>' },
     { dot:'ok', t:'2 hr ago',   body:'Activated 7/7 roles · agent fully online' },
   ];
   function renderFeed(){
@@ -275,7 +275,7 @@
     // Add to feed
     const newRow = document.createElement('div');
     newRow.className = 'dash__feed-item is-new is-in';
-    newRow.innerHTML = `<div class="dash__feed-dot dash__feed-dot--ok"></div><div>Sent reply to Maria Sanchez · party of 8 confirmed<span class="dash__feed-time">just now</span></div>`;
+    newRow.innerHTML = `<div class="dash__feed-dot dash__feed-dot--ok"></div><div>Sent reply to Maria Sanchez · private class for 8 confirmed<span class="dash__feed-time">just now</span></div>`;
     $('#feed').prepend(newRow);
     if (isPlaying) hideCursor();
   }
@@ -285,20 +285,20 @@
      ============================================================ */
   const REVIEWS = [
     { name:'Lucia Ortiz', stars:5, when:'Mar 2026', src:'Yelp',
-      quote:'Itzel asked about my hermana by name. Who does that? The food was perfect and the show ' + String.fromCharCode(0x2014) + ' actually moving.',
-      draft:'"Lucia " + String.fromCharCode(0x2014) + " tell tu hermana we said hi. Saturday at 7, table by the window. " + String.fromCharCode(0x2014) + " Itzel & the Folklorico crew"',
+      quote:'Three years in and Itzel still asks about my hermana by name. She\'ll stop a whole class to fix one wrist until it\'s right. That\'s the kind of teacher she is.',
+      draft:'"Lucia, tell tu hermana we said hi. Saturday at 11, jarabe class. Door\'s open at 10:45 if you want to warm up. abrazos, Itzel & the Folklorico crew"',
       conf:0.94, label:'High match' },
     { name:'Tomás León', stars:5, when:'Apr 2026', src:'Yelp',
-      quote:'Brought my mom for her birthday ' + String.fromCharCode(0x2014) + ' they pulled out a chair facing the dancers. Best Saturday show this season.',
-      draft:'"Tomás " + String.fromCharCode(0x2014) + " happy birthday to mom. Bring her back any Saturday, we\'ll save the same chair. " + String.fromCharCode(0x2014) + " Itzel"',
+      quote:'Got my mom a 10-class pack for her 70th. She was nervous about keeping up. Itzel put her in the back row, walked her through every count, didn\'t rush her once. Mom signed up for the next session before we left.',
+      draft:'"Tomás, tell mom we\'ll see her Tuesday at 11 in beginner-1. Falda is optional \'til she\'s ready. abrazos, Itzel"',
       conf:0.91, label:'High match' },
     { name:'Diego Romero', stars:4, when:'Apr 2026', src:'Google',
-      quote:'Great food, but had to wait 25 min for our table. Patio was packed.',
-      draft:'"Diego " + String.fromCharCode(0x2014) + " thanks for telling me. 25 min is too long. I\'m adding two more Saturday slots starting next week. " + String.fromCharCode(0x2014) + " Itzel"',
+      quote:'Great class, but had to wait 25 min to even get on the floor. Studio was packed.',
+      draft:'"Diego, thanks for telling me. 25 min is too long. I\'m adding two more Saturday slots starting next week. abrazos, Itzel"',
       conf:0.78, label:'Held for review' },
     { name:'Carla M.', stars:5, when:'Apr 2026', src:'Yelp',
-      quote:'The empanadas. The empanadas!! Itzel came over and explained which one had the family recipe.',
-      draft:'"Carla " + String.fromCharCode(0x2014) + " it\'s the green one. My abuela made me promise never to write it down. " + String.fromCharCode(0x2014) + " Itzel"',
+      quote:'The veracruzano. The veracruzano!! Itzel came over and explained which steps were her abuela\'s.',
+      draft:'"Carla, it\'s the steps from Veracruz. My abuela made me promise never to write them down. Only feet remember. abrazos, Itzel"',
       conf:0.96, label:'High match' },
   ];
 
