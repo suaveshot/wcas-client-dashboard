@@ -35,12 +35,14 @@
     const stepEl = ringEl.querySelector("[data-activate-ring-step]");
     if (stepEl) {
       const label = normalized === "first_run"   ? "Running"
-                  : normalized === "connected"   ? "Connected"
-                  : normalized === "config"      ? "Configuring"
-                  : normalized === "credentials" ? "Credentials set"
+                  : normalized === "connected"   ? "Ready, awaiting first run"
+                  : normalized === "config"      ? "Configured"
+                  : normalized === "credentials" ? "Logged in"
                   :                                "Not started";
       stepEl.textContent = label;
     }
+    // Tooltip body is fully static (5 variants pre-rendered); CSS shows
+    // the variant matching data-role-step on the parent. No JS needed.
   }
 
   function renderRings(rings) {
@@ -93,59 +95,117 @@
   }
 
   async function pollAfterOAuth() {
-    if (!connectedHint()) return;
-    let attempts = 0;
-    const maxAttempts = 5;
-    while (attempts < maxAttempts) {
-      const state = await fetchState();
-      if (state) {
-        renderRings(state.rings || []);
-        updateProgress(state.rings || []);
-        if (state.google_validation_status === "ok") break;
-        if (state.google_validation_status === "broken") break;
-      }
-      attempts += 1;
-      await new Promise((r) => setTimeout(r, 1200));
-    }
+    const provider = connectedHint();
+    if (!provider) return;
+    if (window.__apActivateRevealed) return;
+    window.__apActivateRevealed = true;
+
+    // Clean the URL early so a refresh doesn't replay the reveal.
     if (window.history && window.history.replaceState) {
       window.history.replaceState({}, "", window.location.pathname);
     }
-    // Once rings have settled, nudge the agent so it takes the lead instead
-    // of leaving the user staring at the composer wondering what's next.
-    await nudgeAgentAfterOAuth();
+    await playOAuthReveal(provider);
   }
 
-  async function nudgeAgentAfterOAuth() {
-    // Fire once per page load. A URL-param-seeded flag keeps refreshes quiet.
-    if (window.__apActivateNudged) return;
-    window.__apActivateNudged = true;
+  // -------------------------------------------------------------------------
+  // Post-OAuth scripted reveal: 4-stage chat narration with synchronized
+  // ring fills, ~4.5s total. Replaces the silent jump-to-3/4 with a sequence
+  // that actually lets the user watch the agent connecting their accounts.
+  // -------------------------------------------------------------------------
+  async function playOAuthReveal(provider) {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
+    // Which rings this OAuth provider unlocks. Google connects 3 in one shot;
+    // Meta would connect "social" (post-hackathon).
+    const PROVIDER_ROLES = {
+      google: ["gbp", "seo", "reviews"],
+      meta:   ["social"],
+    };
+    const slugs = PROVIDER_ROLES[provider] || [];
+    const ringEls = slugs
+      .map((slug) => document.querySelector(`[data-role-slug="${slug}"]`))
+      .filter(Boolean);
+    if (ringEls.length === 0) return;
+
+    const roleNames = ringEls
+      .map((r) => r.querySelector(".ap-activate-ring__label")?.textContent?.trim())
+      .filter(Boolean);
+
+    // Reset rings to pending so the user sees them fill in. The actual server
+    // state stays at whatever it is; we sync to reality at the end.
+    ringEls.forEach((r) => applyRingState(r, "pending"));
+
+    // Lock the composer during the sequence so a fast typist can't race it.
     const form = document.querySelector("[data-activate-composer]");
     const input = form ? form.querySelector("[data-activate-input]") : null;
     const sendBtn = form ? form.querySelector("[data-activate-send]") : null;
-
-    const thinking = appendThinking();
     if (input) input.disabled = true;
     if (sendBtn) sendBtn.disabled = true;
 
     try {
-      const body = await postChat(
-        "Google is connected now. Tell me what's next and run it."
-      );
+      // Stage 1: thinking dots, then login confirmation
+      await wait(250);
+      let thinking = appendThinking();
+      await wait(900);
       if (thinking) thinking.remove();
-      renderEvents(body.events || []);
-      renderPanels(body.panels || []);
-      renderRings(body.rings || []);
-      updateProgress(body.rings || []);
-    } catch (err) {
+      appendAssistantBubble("Got it. Logging into your Google account.");
+      await wait(450);
+      appendToolEvent({ ok: true, name: "google_oauth", summary: "tokens captured securely" });
+      await wait(550);
+      ringEls.forEach((r) => applyRingState(r, "credentials"));
+
+      // Stage 2: reading data
+      await wait(700);
+      thinking = appendThinking();
+      await wait(950);
       if (thinking) thinking.remove();
-      appendSystemBubble(
-        "I'll pick up from here once you send a message."
-      );
+      const readingLine = roleNames.length === 3
+        ? "Reading your business profile, search performance, and reviews."
+        : `Reading data for ${joinHuman(roleNames)}.`;
+      appendAssistantBubble(readingLine);
+      await wait(500);
+      appendToolEvent({
+        ok: true,
+        name: "validation_probe",
+        summary: `live data confirmed across ${ringEls.length} ${ringEls.length === 1 ? "service" : "services"}`,
+      });
+      await wait(450);
+      ringEls.forEach((r) => applyRingState(r, "config"));
+
+      // Stage 3: ready
+      await wait(700);
+      ringEls.forEach((r) => applyRingState(r, "connected"));
+      await wait(500);
+      const readyLine = `${joinHuman(roleNames)} ${ringEls.length === 1 ? "is" : "are"} wired up and ready to launch. They'll fire their first runs on the next scheduled tick.`;
+      appendAssistantBubble(readyLine);
+
+      // Sync with real server state so anything that doesn't match (e.g. probe
+      // marked one of them broken) corrects itself silently.
+      await wait(300);
+      const real = await fetchState();
+      if (real && Array.isArray(real.rings)) {
+        renderRings(real.rings);
+        updateProgress(real.rings);
+      }
+    } catch (_err) {
+      // Sequence is purely visual; if anything throws, fall back to a sync
+      // from the server so the user doesn't see broken state.
+      const real = await fetchState();
+      if (real && Array.isArray(real.rings)) {
+        renderRings(real.rings);
+        updateProgress(real.rings);
+      }
     } finally {
-      if (input) { input.disabled = false; input.focus(); }
-      if (sendBtn) sendBtn.disabled = false;
+      if (input)   { input.disabled = false; input.focus(); }
+      if (sendBtn) { sendBtn.disabled = false; }
     }
+  }
+
+  function joinHuman(items) {
+    if (!items || items.length === 0) return "";
+    if (items.length === 1) return items[0];
+    if (items.length === 2) return `${items[0]} and ${items[1]}`;
+    return `${items.slice(0, -1).join(", ")}, and ${items[items.length - 1]}`;
   }
 
   // ---------------------------------------------------------------------

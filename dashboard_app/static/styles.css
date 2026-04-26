@@ -58,9 +58,10 @@
   --s-9: 96px;
   --s-10: 128px;
 
-  /* Type */
-  --font-display: 'DM Serif Display', 'Georgia', serif;
-  --font-body:    'DM Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  /* Type. Apple-esque rounded sans. Mac users see real SF Pro, everyone
+     else gets Plus Jakarta Sans (loaded via Google Fonts in templates). */
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Plus Jakarta Sans", system-ui, sans-serif;
+  --font-body:    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Plus Jakarta Sans", system-ui, sans-serif;
 
   /* Layout */
   --max-w:      1200px;
@@ -68,10 +69,12 @@
   --gutter:     20px;
 
   /* Motion */
-  --ease:    cubic-bezier(0.22, 0.61, 0.36, 1);
-  --t-fast:  140ms;
-  --t-base:  220ms;
-  --t-slow:  420ms;
+  --ease:        cubic-bezier(0.22, 0.61, 0.36, 1);     /* standard ease-out */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);     /* gentle overshoot */
+  --ease-pop:    cubic-bezier(0.16, 1, 0.3, 1);          /* fast in, slow out */
+  --t-fast:      140ms;
+  --t-base:      220ms;
+  --t-slow:      420ms;
 }
 
 @media (min-width: 768px) { :root { --gutter: 32px; } }
@@ -92,21 +95,24 @@ html { -webkit-text-size-adjust: 100%; }
 
 body {
   font-family: var(--font-body);
-  font-size: 18px;
-  line-height: 1.65;
+  font-size: 17px;
+  line-height: 1.55;
+  letter-spacing: -0.005em;
   color: var(--ink-soft);
   background: var(--bg);
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "ss01", "cv11";
 }
 
 h1, h2, h3, h4, h5, h6 {
   font-family: var(--font-display);
-  font-weight: 400;
+  font-weight: 700;
   color: var(--ink);
-  line-height: 1.15;
-  letter-spacing: -0.01em;
+  line-height: 1.12;
+  letter-spacing: -0.022em;
+  font-feature-settings: "ss01", "cv11";
 }
 
 h1 { font-size: clamp(32px, 5vw, 56px); margin-bottom: var(--s-5); }
@@ -3466,21 +3472,27 @@ body.ap-receipts-drawer-open { overflow: hidden; }
    ========================================================================== */
 
 .ap-activate-body {
-  background: var(--bg);
+  /* Cream canvas. The main content sits on top as a floating white card
+     so the whole surface reads like a premium product, not a website. */
+  background: #E8DECB;
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  padding: 18px 18px 0;
 }
 
 .ap-activate-bar {
   display: flex;
   align-items: center;
   gap: var(--s-5);
-  height: 56px;
-  padding: 0 var(--s-5);
-  background: var(--bg-elev);
-  border-bottom: 1px solid var(--border-soft);
+  height: 52px;
+  padding: 0 var(--s-3);
+  background: transparent;
+  border-bottom: 0;
   flex-shrink: 0;
+  max-width: 1280px;
+  width: 100%;
+  margin: 0 auto;
 }
 .ap-activate-bar__back {
   display: inline-flex;
@@ -3515,15 +3527,20 @@ body.ap-receipts-drawer-open { overflow: hidden; }
 }
 
 .ap-activate-progress {
-  height: 4px;
-  background: var(--border-soft);
+  height: 3px;
+  background: rgba(0, 0, 0, 0.05);
   flex-shrink: 0;
   overflow: hidden;
+  border-radius: 999px;
+  max-width: 1280px;
+  width: calc(100% - 0px);
+  margin: 0 auto var(--s-3);
 }
 .ap-activate-progress__fill {
   height: 100%;
   background: var(--accent);
   transition: width var(--t-slow) var(--ease);
+  border-radius: 999px;
 }
 
 .ap-activate-main {
@@ -3531,6 +3548,18 @@ body.ap-receipts-drawer-open { overflow: hidden; }
   grid-template-columns: 45% 55%;
   flex-grow: 1;
   min-height: 0;
+  /* Floating white card on the cream canvas. This is the FinPlanner-
+     reference move. Chat | rings split lives inside one big rounded card. */
+  background: #FFFFFF;
+  border-radius: 22px;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.04),
+    0 24px 48px rgba(60, 40, 20, 0.08),
+    0 0 0 1px rgba(0, 0, 0, 0.03);
+  max-width: 1280px;
+  width: 100%;
+  margin: 0 auto 18px;
+  overflow: hidden;
 }
 
 /* ----- Chat column -------------------------------------------------------- */
@@ -3538,8 +3567,8 @@ body.ap-receipts-drawer-open { overflow: hidden; }
 .ap-activate-chat {
   display: flex;
   flex-direction: column;
-  background: var(--bg);
-  border-right: 1px solid var(--border-soft);
+  background: #FFFFFF;
+  /* Divider lives on .ap-activate-rings (border-left) so we don't double up. */
   overflow: hidden;
 }
 .ap-activate-chat__stream {
@@ -3551,10 +3580,21 @@ body.ap-receipts-drawer-open { overflow: hidden; }
   margin: 0 auto;
 }
 
+@keyframes apMsgEnter {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes apDotPop {
+  0%   { transform: scale(0.6); }
+  60%  { transform: scale(1.18); }
+  100% { transform: scale(1); }
+}
+
 .ap-activate-msg {
   display: flex;
   gap: var(--s-3);
   margin-bottom: var(--s-6);
+  animation: apMsgEnter 360ms var(--ease-pop) both;
 }
 .ap-activate-msg--asst .ap-activate-msg__glyph {
   flex-shrink: 0;
@@ -3660,9 +3700,13 @@ body.ap-receipts-drawer-open { overflow: hidden; }
 /* ----- Ring grid --------------------------------------------------------- */
 
 .ap-activate-rings {
-  background: var(--bg-alt);
+  /* Inside the floating white card now, so this panel is white. The card
+     itself sits on the cream canvas. Chat panel and rings panel are
+     separated by a subtle 1px divider, no more cream/white split. */
+  background: #FFFFFF;
   padding: var(--s-6) var(--s-6);
   overflow-y: auto;
+  border-left: 1px solid rgba(0, 0, 0, 0.06);
 }
 .ap-activate-rings__title {
   font-size: 24px;
@@ -3685,9 +3729,9 @@ body.ap-receipts-drawer-open { overflow: hidden; }
   flex-wrap: wrap;
   margin-bottom: var(--s-5);
   padding: var(--s-3) var(--s-4);
-  background: var(--bg);
-  border: 1px solid var(--border-soft);
-  border-radius: var(--r-md);
+  background: #F8F4EA;
+  border: 1px solid rgba(60, 40, 20, 0.05);
+  border-radius: 14px;
   font-size: 12px;
   color: var(--ink-muted);
 }
@@ -3731,58 +3775,96 @@ body.ap-receipts-drawer-open { overflow: hidden; }
   display: block;
 }
 
-/* Ring arcs: default every arc to the muted pending color; the data-role-step
-   attribute on the parent paints arcs teal as the role advances. Colors
-   transition so the "click once, six rings fill" moment feels alive. */
-.ap-activate-ring__arc {
-  stroke: var(--border-strong);
-  transition: stroke var(--t-slow) var(--ease);
+/* Ring redesigned to drop the outer hairline circle entirely. The vendor
+   icon tile is now the sole visual element; status is carried by the dot
+   strip below the label. The tile picks up a subtle teal glow on first_run
+   as the celebratory state. */
+
+/* 4-stage progress strip: filled teal pips for completed stages, hollow
+   muted pips for remaining stages. Reads at a glance, no spinner vibe. */
+.ap-activate-ring__dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
 }
-.ap-activate-ring[data-role-step="credentials"] .ap-activate-ring__arc--1 { stroke: var(--teal); }
-.ap-activate-ring[data-role-step="config"]      .ap-activate-ring__arc--1,
-.ap-activate-ring[data-role-step="config"]      .ap-activate-ring__arc--2 { stroke: var(--teal); }
-.ap-activate-ring[data-role-step="connected"]   .ap-activate-ring__arc--1,
-.ap-activate-ring[data-role-step="connected"]   .ap-activate-ring__arc--2,
-.ap-activate-ring[data-role-step="connected"]   .ap-activate-ring__arc--3 { stroke: var(--teal); }
-.ap-activate-ring[data-role-step="first_run"]   .ap-activate-ring__arc { stroke: var(--teal); }
-.ap-activate-ring[data-role-step="first_run"]   .ap-activate-ring__svg {
-  filter: drop-shadow(0 0 8px rgba(46, 143, 168, 0.35));
+.ap-activate-ring__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: transparent;
+  border: 1.5px solid color-mix(in srgb, var(--ink-muted) 45%, transparent);
+  transition:
+    background var(--t-base) var(--ease-pop),
+    border-color var(--t-base) var(--ease-pop),
+    transform var(--t-base) var(--ease-spring),
+    box-shadow var(--t-slow) var(--ease);
+}
+.ap-activate-ring[data-role-step="credentials"] .ap-activate-ring__dot--1,
+.ap-activate-ring[data-role-step="config"]      .ap-activate-ring__dot--1,
+.ap-activate-ring[data-role-step="config"]      .ap-activate-ring__dot--2,
+.ap-activate-ring[data-role-step="connected"]   .ap-activate-ring__dot--1,
+.ap-activate-ring[data-role-step="connected"]   .ap-activate-ring__dot--2,
+.ap-activate-ring[data-role-step="connected"]   .ap-activate-ring__dot--3,
+.ap-activate-ring[data-role-step="first_run"]   .ap-activate-ring__dot {
+  background: var(--teal);
+  border-color: var(--teal);
+  animation: apDotPop 480ms var(--ease-spring) both;
+}
+/* Latest filled dot gets a soft glow halo so the eye lands there. */
+.ap-activate-ring[data-role-step="credentials"] .ap-activate-ring__dot--1,
+.ap-activate-ring[data-role-step="config"]      .ap-activate-ring__dot--2,
+.ap-activate-ring[data-role-step="connected"]   .ap-activate-ring__dot--3,
+.ap-activate-ring[data-role-step="first_run"]   .ap-activate-ring__dot--4 {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--teal) 22%, transparent);
 }
 
-/* Ring visual: positioned wrapper so the vendor logo can sit absolute-centered
-   on top of the SVG ring arcs. */
+/* Ring visual: simple wrapper, no positioning required since the icon tile
+   stands alone now. */
 .ap-activate-ring__visual {
-  position: relative;
   display: inline-block;
   line-height: 0;
 }
 .ap-activate-ring__logo {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 40px;
-  height: 40px;
+  width: 68px;
+  height: 68px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  background: var(--bg);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
-  transition: transform var(--t-fast) var(--ease), filter var(--t-slow) var(--ease);
+  /* Soft cream chip background since rings now sit on the white card. */
+  background: #F4ECDC;
+  box-shadow:
+    inset 0 0 0 1px rgba(60, 40, 20, 0.05),
+    0 1px 2px rgba(0, 0, 0, 0.03),
+    0 6px 16px rgba(60, 40, 20, 0.06);
+  transition:
+    transform var(--t-base) var(--ease-spring),
+    filter var(--t-slow) var(--ease),
+    box-shadow var(--t-base) var(--ease),
+    background var(--t-slow) var(--ease);
+}
+.ap-activate-ring:hover .ap-activate-ring__logo,
+.ap-activate-ring:focus-within .ap-activate-ring__logo {
+  transform: translateY(-3px) scale(1.02);
+  box-shadow:
+    0 2px 4px rgba(0, 0, 0, 0.05),
+    0 12px 28px rgba(60, 40, 20, 0.12),
+    0 0 0 1px rgba(0, 0, 0, 0.04);
 }
 .ap-activate-ring__logo svg {
-  width: 28px;
-  height: 28px;
+  width: 36px;
+  height: 36px;
   display: block;
 }
-/* Pending rings desaturate the logo slightly so the ring grid communicates
+/* Pending rings desaturate the icon slightly so the grid communicates
    "not yet set up" without hiding the brand entirely. */
 .ap-activate-ring[data-role-step="pending"] .ap-activate-ring__logo {
   filter: saturate(0.35) opacity(0.7);
 }
 .ap-activate-ring[data-role-step="first_run"] .ap-activate-ring__logo {
-  transform: translate(-50%, -50%) scale(1.05);
+  transform: scale(1.05);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--teal) 30%, transparent), 0 0 16px rgba(46, 143, 168, 0.35);
 }
 
 .ap-activate-ring__label {
@@ -3792,15 +3874,123 @@ body.ap-receipts-drawer-open { overflow: hidden; }
   line-height: 1.2;
   margin-top: var(--s-1);
 }
+/* Status pill: replaces flat status text with a soft tinted chip, picks
+   up the FinPlanner-reference pill aesthetic. Color shifts via the
+   data-role-step attribute on the parent. */
 .ap-activate-ring__step {
-  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(60, 40, 20, 0.05);
   color: var(--ink-muted);
-  letter-spacing: 0.02em;
+  border: 1px solid rgba(60, 40, 20, 0.06);
+  transition:
+    background var(--t-slow) var(--ease),
+    color var(--t-slow) var(--ease),
+    border-color var(--t-slow) var(--ease);
 }
-.ap-activate-ring[data-role-step="connected"] .ap-activate-ring__step,
-.ap-activate-ring[data-role-step="first_run"] .ap-activate-ring__step {
+.ap-activate-ring[data-role-step="credentials"] .ap-activate-ring__step,
+.ap-activate-ring[data-role-step="config"]      .ap-activate-ring__step {
+  background: color-mix(in srgb, var(--teal) 8%, white);
+  color: color-mix(in srgb, var(--teal) 80%, var(--ink));
+  border-color: color-mix(in srgb, var(--teal) 18%, transparent);
+}
+.ap-activate-ring[data-role-step="connected"] .ap-activate-ring__step {
+  background: color-mix(in srgb, var(--teal) 14%, white);
   color: var(--teal);
-  font-weight: 500;
+  border-color: color-mix(in srgb, var(--teal) 28%, transparent);
+  font-weight: 600;
+}
+.ap-activate-ring[data-role-step="first_run"] .ap-activate-ring__step {
+  background: var(--teal);
+  color: white;
+  border-color: transparent;
+  font-weight: 600;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--teal) 12%, transparent);
+}
+
+/* ----- Stage tooltip ----------------------------------------------------- */
+/* Each ring is hover/focus-revealing a tooltip that explains the current
+   stage in plain English. All 5 variants are pre-rendered; CSS shows only
+   the one whose data-tip-step matches the parent's data-role-step. */
+.ap-activate-ring {
+  position: relative;
+  cursor: default;
+}
+.ap-activate-ring__tooltip {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  width: max-content;
+  max-width: 280px;
+  padding: 10px 14px;
+  background: var(--ink);
+  color: var(--bg);
+  border-radius: var(--r-md);
+  font-size: 12.5px;
+  line-height: 1.45;
+  text-align: left;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18), 0 2px 6px rgba(0, 0, 0, 0.10);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--t-fast) var(--ease), transform var(--t-fast) var(--ease);
+  z-index: 20;
+}
+.ap-activate-ring__tooltip::after {
+  /* Caret pointing down at the ring tile */
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: var(--ink);
+}
+.ap-activate-ring__tooltip strong {
+  color: var(--bg);
+  font-weight: 600;
+  display: inline;
+  margin-right: 4px;
+}
+.ap-activate-ring__tooltip p {
+  margin: 0;
+}
+/* Show the variant whose data-tip-step matches the ring's current state. */
+.ap-activate-ring__tooltip p { display: none; }
+.ap-activate-ring[data-role-step="pending"]     .ap-activate-ring__tooltip p[data-tip-step="pending"],
+.ap-activate-ring[data-role-step="credentials"] .ap-activate-ring__tooltip p[data-tip-step="credentials"],
+.ap-activate-ring[data-role-step="config"]      .ap-activate-ring__tooltip p[data-tip-step="config"],
+.ap-activate-ring[data-role-step="connected"]   .ap-activate-ring__tooltip p[data-tip-step="connected"],
+.ap-activate-ring[data-role-step="first_run"]   .ap-activate-ring__tooltip p[data-tip-step="first_run"] {
+  display: block;
+}
+/* Reveal tooltip on hover (desktop) and focus-within (keyboard / tap on
+   focusable child). Slight upward float on reveal so it feels deliberate. */
+.ap-activate-ring:hover .ap-activate-ring__tooltip,
+.ap-activate-ring:focus-within .ap-activate-ring__tooltip {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+/* First-row rings (no space above) flip the tooltip below the tile. */
+.ap-activate-rings__grid > .ap-activate-ring:nth-child(-n+4) .ap-activate-ring__tooltip {
+  bottom: auto;
+  top: calc(100% + 10px);
+  transform: translateX(-50%) translateY(-4px);
+}
+.ap-activate-rings__grid > .ap-activate-ring:nth-child(-n+4) .ap-activate-ring__tooltip::after {
+  top: auto;
+  bottom: 100%;
+  border-top-color: transparent;
+  border-bottom-color: var(--ink);
+}
+.ap-activate-rings__grid > .ap-activate-ring:nth-child(-n+4):hover .ap-activate-ring__tooltip,
+.ap-activate-rings__grid > .ap-activate-ring:nth-child(-n+4):focus-within .ap-activate-ring__tooltip {
+  transform: translateX(-50%) translateY(0);
 }
 
 /* ----- Mobile ------------------------------------------------------------ */
@@ -3994,6 +4184,7 @@ body.ap-receipts-drawer-open { overflow: hidden; }
 
 /* Tool event pill. */
 .ap-activate-event {
+  animation: apMsgEnter 360ms var(--ease-pop) both;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -4025,6 +4216,7 @@ body.ap-receipts-drawer-open { overflow: hidden; }
   align-items: center;
   gap: var(--s-3);
   margin-bottom: var(--s-6);
+  animation: apMsgEnter 320ms var(--ease-pop) both;
 }
 .ap-activate-thinking__dots {
   display: inline-flex;

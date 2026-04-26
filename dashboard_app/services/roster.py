@@ -23,9 +23,9 @@ ACTIVATION_ROSTER: list[dict[str, str]] = [
     {"slug": "gbp",             "name": "Google Business", "logo": "google"},
     {"slug": "seo",             "name": "SEO Reports",     "logo": "google_search_console"},
     {"slug": "reviews",         "name": "Review Engine",   "logo": "google"},
-    {"slug": "email_assistant", "name": "Email Assistant", "logo": "wcas"},
-    {"slug": "chat_widget",     "name": "Chat Widget",     "logo": "wcas"},
-    {"slug": "blog",            "name": "Blog Automation", "logo": "wcas"},
+    {"slug": "email_assistant", "name": "Email Assistant", "logo": "email_assistant"},
+    {"slug": "chat_widget",     "name": "Chat Widget",     "logo": "chat_widget"},
+    {"slug": "blog",            "name": "Blog Automation", "logo": "blog"},
     {"slug": "social",          "name": "Social Manager",  "logo": "meta"},
 ]
 
