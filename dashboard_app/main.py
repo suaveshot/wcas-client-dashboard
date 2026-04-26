@@ -189,8 +189,13 @@ async def dev_login(tenant: str = "americal_patrol") -> RedirectResponse:
 
 @app.post("/auth/judge")
 async def judge_demo_login() -> RedirectResponse:
-    """Hackathon judge bypass: mint a session as Garcia Folklorico and skip
-    the magic-link email step. Public, idempotent, single hardcoded tenant.
+    """Hackathon judge bypass: mint a session as the pre-seeded Riverbend
+    Barbershop demo tenant and drop the judge directly onto /dashboard.
+
+    The tenant is fully populated by `scripts/seed_judge_demo.py`: 7 roles
+    activated, ~35 receipts, 5 pending drafts, 3 recommendations, 1 goal.
+    Judges can browse every surface (Cmd-K Ask, /approvals, role drill-down,
+    receipts drawer) without doing any onboarding.
     """
     from .services import (
         activation_state as _astate,
@@ -198,7 +203,7 @@ async def judge_demo_login() -> RedirectResponse:
         sessions as _sessions,
     )
 
-    tenant_id = "garcia_folklorico"
+    tenant_id = "riverbend_barbershop"
     email = "judge@claudejudge.com"
     role = "client"
 

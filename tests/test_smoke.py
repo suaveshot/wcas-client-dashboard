@@ -49,7 +49,10 @@ def test_dev_login_rejects_invalid_tenant(monkeypatch):
     assert r.status_code == 400
 
 
-def test_judge_demo_redirects_to_activate(tmp_path, monkeypatch):
+def test_judge_demo_redirects_when_tenant_unseeded(tmp_path, monkeypatch):
+    """With an empty TENANT_ROOT the judge tenant has no activation file,
+    so the route falls back to /activate. Confirms the route mints a session
+    and that the redirect logic mirrors the magic-link verify flow."""
     monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
     fresh = TestClient(app)
     r = fresh.post("/auth/judge", follow_redirects=False)
@@ -58,7 +61,22 @@ def test_judge_demo_redirects_to_activate(tmp_path, monkeypatch):
     assert "wcas_session=" in r.headers.get("set-cookie", "")
 
 
-def test_judge_demo_session_is_garcia_folklorico(tmp_path, monkeypatch):
+def test_judge_demo_redirects_to_dashboard_when_seeded(tmp_path, monkeypatch):
+    """Once the tenant is seeded with mark_complete, the route lands on
+    /dashboard - which is the production behaviour after seed_judge_demo.py
+    has run."""
+    from dashboard_app.services import activation_state
+
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    activation_state.mark_complete("riverbend_barbershop", note="test seed")
+
+    fresh = TestClient(app)
+    r = fresh.post("/auth/judge", follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"] == "/dashboard"
+
+
+def test_judge_demo_session_is_riverbend_barbershop(tmp_path, monkeypatch):
     from dashboard_app.services import sessions
 
     monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
@@ -69,7 +87,7 @@ def test_judge_demo_session_is_garcia_folklorico(tmp_path, monkeypatch):
     assert cookie, "judge route did not set wcas_session cookie"
     payload = sessions.verify(cookie)
     assert payload is not None
-    assert payload["tid"] == "garcia_folklorico"
+    assert payload["tid"] == "riverbend_barbershop"
     assert payload["rl"] == "client"
 
 
