@@ -494,7 +494,8 @@ async def recommendations_page(request: Request):
         all_recs = seeded_recs.build_with_drafts(tenant_id, limit=12)
         source = "seeded"
 
-    live = [r for r in all_recs if not r.get("draft")]
+    from .services import rec_actions as _rec_actions
+    live = _rec_actions.filter_unacted(tenant_id, [r for r in all_recs if not r.get("draft")])
     drafts = [r for r in all_recs if r.get("draft")] if is_admin else []
 
     return templates.TemplateResponse(

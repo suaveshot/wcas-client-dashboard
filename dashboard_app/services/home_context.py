@@ -29,7 +29,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from . import activity_feed, hero_stats, notifications, recent_asks, recs_store, seeded_recs, telemetry
+from . import activity_feed, hero_stats, notifications, rec_actions, recent_asks, recs_store, seeded_recs, telemetry
 
 
 _SPARK_UP = "M0,22 L15,18 L30,20 L45,14 L60,16 L75,10 L90,12 L105,7 L120,9 L135,5 L150,7 L165,3 L180,5 L200,2"
@@ -165,9 +165,10 @@ def build(tenant_id: str, owner_name: str = "", tenant_display: str = "") -> dic
     # so the surface is never blank for cold-start tenants.
     fresh = recs_store.read_latest(tenant_id)
     if recs_store.is_fresh(fresh):
-        live_recs = [r for r in (fresh.get("recs") or []) if not r.get("draft")][:3]
+        live_recs = [r for r in (fresh.get("recs") or []) if not r.get("draft")]
     else:
-        live_recs = seeded_recs.build(tenant_id, limit=3)
+        live_recs = seeded_recs.build(tenant_id, limit=12)
+    live_recs = rec_actions.filter_unacted(tenant_id, live_recs)[:3]
 
     ctx = {
         "tenant_name": display_name,
