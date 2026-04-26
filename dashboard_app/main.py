@@ -415,6 +415,7 @@ async def role_detail_page(request: Request, role_slug: str):
 
     tenant_id = sess["tid"] if sess else "americal_patrol"
     ctx = role_detail.build(tenant_id=tenant_id, role_slug=role_slug)
+    ctx.setdefault("tenant_name", home_context._display_from_slug(tenant_id))
     return templates.TemplateResponse(request, "role_detail.html", ctx)
 
 
