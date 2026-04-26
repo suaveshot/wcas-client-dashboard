@@ -246,14 +246,21 @@ def test_session_middleware_lets_valid_cookie_through():
 
 
 def test_no_em_dashes_in_source():
-    """Brand rule enforcement: em dashes forbidden in committed HTML + CSS."""
+    """Brand rule enforcement: em dashes forbidden in committed HTML + CSS.
+
+    Skips: .venv, __pycache__, node_modules (third-party deps), and any
+    directory under "hackathon demo video/" which is local-only video
+    project artifacts not deployed.
+    """
     import pathlib
 
     em_dash = "—"
     root = pathlib.Path(__file__).resolve().parent.parent
+    skip_segments = (".venv", "__pycache__", "node_modules", "hackathon demo video")
     for ext in ("*.html", "*.css", "*.py", "*.md"):
         for path in root.rglob(ext):
-            if ".venv" in str(path) or "__pycache__" in str(path):
+            path_str = str(path)
+            if any(seg in path_str for seg in skip_segments):
                 continue
             if path.name == "test_smoke.py":
                 continue  # this file references the char for the check

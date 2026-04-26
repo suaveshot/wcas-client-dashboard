@@ -49,7 +49,7 @@ TEMPLATES_DIR = APP_DIR / "templates"
 app = FastAPI(
     title="WCAS Client Dashboard",
     description="Agency-level client activation + live automation telemetry.",
-    version="0.6.0",
+    version="0.7.0",
 )
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -277,6 +277,32 @@ async def activation_state_api(tenant_id: str = Depends(require_tenant)) -> JSON
         "google_validation_status": (google_cred or {}).get("validation_status", ""),
         "probe_summary": validation_probe.load_result(tenant_id, "google"),
     })
+
+
+@app.get("/demo")
+async def demo_root() -> RedirectResponse:
+    """Ergonomic shortcut: /demo always lands on the activation cinematic."""
+    return RedirectResponse(url="/demo/activation", status_code=303)
+
+
+@app.get("/demo/activation", response_class=HTMLResponse)
+async def demo_activation(request: Request) -> HTMLResponse:
+    """Five-scene scripted activation cinematic from Claude Design.
+
+    Standalone prototype, no auth, no tenant. Used for the hackathon
+    submission video. Backend untouched; the page is pure CSS+JS.
+    """
+    return templates.TemplateResponse(request, "demo_activation.html", {})
+
+
+@app.get("/demo/dashboard", response_class=HTMLResponse)
+async def demo_dashboard(request: Request) -> HTMLResponse:
+    """Six-scene scripted dashboard cinematic from Claude Design.
+
+    Standalone prototype, no auth, no tenant. Speaker notes embedded
+    inline in the page. Sister cinematic to /demo/activation.
+    """
+    return templates.TemplateResponse(request, "demo_dashboard.html", {})
 
 
 @app.get("/terms", response_class=HTMLResponse)

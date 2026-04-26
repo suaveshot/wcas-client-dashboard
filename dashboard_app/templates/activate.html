@@ -11,7 +11,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="/static/styles.css?v=20260425e">
+    <link rel="stylesheet" href="/static/styles.css?v=20260425g">
 
     {# Demo mode flag: when ?demo=1 is in the URL, agent_viz.js plays
        the AI-thinking animations (voice extraction, CRM mapping,
@@ -303,12 +303,23 @@
             {% for role in roster %}
             {% set step = role.step or 'pending' %}
             {% set completed = {'credentials': 1, 'config': 2, 'connected': 3, 'first_run': 4}.get(step, 0) %}
+            {# Arc dashoffset: circumference = 2*pi*40 ~= 251.33. Filled portion
+               grows as completed/4. Computed server-side so non-JS users still
+               see the right ring fill. #}
+            {% set arc_offset = ((251.33 * (4 - completed)) / 4)|round(2) %}
             <div class="ap-activate-ring" data-activate-ring data-role-slug="{{ role.slug }}" data-role-step="{{ step }}"
                  tabindex="0" aria-label="{{ role.name }} stage details">
                 <div class="ap-activate-ring__visual">
-                    {# Bare icon tile, no surrounding ring. Status carried by the
-                       dot strip below the label. The tile picks up a subtle
-                       teal glow only on first_run as the celebratory state. #}
+                    {# Bezel + progress arc: the cream chip is the bezel; the
+                       SVG overlays it with a teal arc that fills as the role
+                       advances through credentials -> config -> connected ->
+                       first_run. arc-fill flips green at first_run. #}
+                    <svg class="ap-activate-ring__arc" viewBox="0 0 84 84" aria-hidden="true" data-activate-ring-arc>
+                        <circle class="ap-activate-ring__arc-track" cx="42" cy="42" r="40"></circle>
+                        <circle class="ap-activate-ring__arc-fill"  cx="42" cy="42" r="40"
+                                stroke-dasharray="251.33"
+                                style="stroke-dashoffset: {{ arc_offset }}"></circle>
+                    </svg>
                     <span class="ap-activate-ring__logo" aria-hidden="true">
                         {{ LOGOS.get(role.logo, LOGOS["wcas"])|safe }}
                     </span>
@@ -358,6 +369,18 @@
             {% endfor %}
         </div>
 
+        {# Celebration choreography: gold halo, confetti, and "All 7 roles
+           activated" badge fire when activate.js detects all rings have
+           reached first_run. Containers always render; the parent
+           .ap-activate-rings--celebrating class drives the animation. #}
+        <div class="ap-activate-rings__halo" aria-hidden="true"></div>
+        <div class="ap-activate-rings__confetti" data-activate-confetti-layer aria-hidden="true"></div>
+        <div class="ap-activate-rings__badge" data-activate-activated-badge aria-hidden="true">
+            <span class="ap-activate-rings__badge-star" aria-hidden="true">&#10022;</span>
+            <span>All {{ roster|length }} roles activated</span>
+            <span class="ap-activate-rings__badge-time" data-activate-activated-elapsed></span>
+        </div>
+
         {# Samples panel: hidden until mark_activation_complete fires and the UI
            pulls the 7 per-pipeline samples from /api/activation/samples. #}
         <section class="ap-activate-samples" data-activate-samples hidden>
@@ -370,7 +393,12 @@
     </aside>
 </main>
 
+{# Voice-card source tooltip (dormant until the agent emits a chat message
+   containing <span class="src" data-src-q="..." data-src-label="...">…</span>
+   spans inside a .voice-card). Positioned by activate.js. #}
+<div class="ap-src-tip" data-activate-src-tip aria-hidden="true"></div>
+
 <script defer src="/static/intro.js?v=20260425e"></script>
-<script defer src="/static/activate.js?v=20260425e"></script>
+<script defer src="/static/activate.js?v=20260425g"></script>
 </body>
 </html>

@@ -26,11 +26,32 @@
   // Ring grid (Day 4 surface)
   // ---------------------------------------------------------------------
 
+  // Arc circumference for a circle of r=40: 2π·40 ≈ 251.33. The fill
+  // arc's stroke-dashoffset shrinks as completed steps grow.
+  const ARC_LEN = 251.33;
+  const STEP_INDEX = { pending: 0, credentials: 1, config: 2, connected: 3, first_run: 4 };
+
+  function applyRingArc(ringEl, step) {
+    const arcFill = ringEl.querySelector(".ap-activate-ring__arc-fill");
+    if (!arcFill) return;
+    const completed = STEP_INDEX[step] ?? 0;
+    const offset = (ARC_LEN * (4 - completed)) / 4;
+    arcFill.style.strokeDashoffset = String(offset.toFixed(2));
+  }
+
   function applyRingState(ringEl, step) {
     if (!ringEl) return;
     const normalized = STEP_ORDER.includes(step) ? step : "pending";
     if (ringEl.dataset.roleStep === normalized) return;
+    const wasFirstRun = ringEl.dataset.roleStep === "first_run";
     ringEl.dataset.roleStep = normalized;
+    applyRingArc(ringEl, normalized);
+
+    // Pop animation when a ring just transitioned to first_run.
+    if (normalized === "first_run" && !wasFirstRun) {
+      ringEl.classList.add("ap-activate-ring--just-closed");
+      setTimeout(() => ringEl.classList.remove("ap-activate-ring--just-closed"), 700);
+    }
 
     const stepEl = ringEl.querySelector("[data-activate-ring-step]");
     if (stepEl) {
@@ -56,6 +77,69 @@
       if (!ring) return;
       applyRingState(el, ring.step);
     });
+    checkActivationComplete();
+  }
+
+  // ----- Celebration choreography ------------------------------------
+  // When all rings reach first_run, fire the gold halo + confetti +
+  // "All N roles activated" badge. Once per session.
+
+  const CELEBRATION_KEY = "wcas_activation_celebrated";
+  const ACTIVATION_START_KEY = "wcas_activation_started_at";
+  const CONFETTI_COLORS = ["#D4A437", "#F4C53D", "#E97B2E", "#FBBC05"];
+
+  function spawnConfetti(layer) {
+    if (!layer) return;
+    layer.replaceChildren();
+    const w = Math.max(layer.offsetWidth, 1);
+    for (let i = 0; i < 28; i++) {
+      const c = document.createElement("span");
+      c.className = "ap-confetti";
+      c.style.left = `${10 + Math.random() * 80}%`;
+      c.style.top = `${28 + Math.random() * 30}%`;
+      c.style.background = CONFETTI_COLORS[i % CONFETTI_COLORS.length];
+      c.style.animationDelay = `${(Math.random() * 0.4).toFixed(2)}s`;
+      c.style.transform = `rotate(${Math.floor(Math.random() * 360)}deg)`;
+      const sz = 3 + Math.random() * 5;
+      c.style.width = `${sz.toFixed(1)}px`;
+      c.style.height = `${sz.toFixed(1)}px`;
+      layer.appendChild(c);
+    }
+  }
+
+  function formatElapsed(ms) {
+    if (!ms || ms < 0) return "";
+    const total = Math.round(ms / 1000);
+    const m = Math.floor(total / 60);
+    const s = total % 60;
+    if (m === 0) return `in ${s}s`;
+    return `in ${m} min ${s}s`;
+  }
+
+  function checkActivationComplete() {
+    const ringsAside = document.querySelector(".ap-activate-rings");
+    if (!ringsAside) return;
+    const ringEls = ringsAside.querySelectorAll("[data-activate-ring]");
+    if (ringEls.length === 0) return;
+    const allRunning = [...ringEls].every((el) => el.dataset.roleStep === "first_run");
+    if (!allRunning) return;
+    if (sessionStorage.getItem(CELEBRATION_KEY)) return;
+    sessionStorage.setItem(CELEBRATION_KEY, "1");
+
+    const elapsedEl = ringsAside.querySelector("[data-activate-activated-elapsed]");
+    if (elapsedEl) {
+      const startedAt = Number(sessionStorage.getItem(ACTIVATION_START_KEY) || 0);
+      if (startedAt) elapsedEl.textContent = formatElapsed(Date.now() - startedAt);
+    }
+
+    ringsAside.classList.add("ap-activate-rings--celebrating");
+    spawnConfetti(ringsAside.querySelector("[data-activate-confetti-layer]"));
+  }
+
+  // Stamp the activation start so the badge can show elapsed time.
+  // Only stamps if not already set this session.
+  if (!sessionStorage.getItem(ACTIVATION_START_KEY)) {
+    sessionStorage.setItem(ACTIVATION_START_KEY, String(Date.now()));
   }
 
   function updateProgress(rings) {
@@ -983,11 +1067,39 @@
     wireComposer();
     wireScreenshotInput();
     pollAfterOAuth();
+    wireVoiceCardTooltip();
 
     // Pull any existing provisioning plan + samples (page reload case).
     fetchProvisioningPlan().then(applyStrategyChips);
     fetchSamples();
   });
+
+  // Voice-card source citations: hover any <span class="src" data-src-q="..."
+  // data-src-label="..."> to surface the dark tooltip with the underlying
+  // quote + source label. Dormant unless the agent emits voice-card markup.
+  function wireVoiceCardTooltip() {
+    const tip = document.querySelector("[data-activate-src-tip]");
+    if (!tip) return;
+    document.addEventListener("mouseover", (e) => {
+      const src = e.target.closest(".src");
+      if (!src || !src.dataset.srcQ) return;
+      const lblNode = document.createElement("span");
+      lblNode.className = "ap-src-tip__lbl";
+      lblNode.textContent = src.dataset.srcLabel || "Source";
+      tip.replaceChildren(lblNode, document.createTextNode(`"${src.dataset.srcQ}"`));
+      const r = src.getBoundingClientRect();
+      tip.style.left = `${r.left + r.width / 2 - 120}px`;
+      tip.style.top = `${r.top - 8 - tip.offsetHeight}px`;
+      requestAnimationFrame(() => {
+        const h = tip.offsetHeight;
+        tip.style.top = `${r.top - 12 - h}px`;
+        tip.classList.add("is-shown");
+      });
+    });
+    document.addEventListener("mouseout", (e) => {
+      if (e.target.closest(".src")) tip.classList.remove("is-shown");
+    });
+  }
 
   // Silence unused-var lint for the SVG_NS reference we kept for future use.
   void SVG_NS;
