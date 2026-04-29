@@ -413,6 +413,65 @@ def test_status_403_renders_branded_page():
         app.router.routes = [r for r in app.router.routes if getattr(r, "path", "") != "/_test/forbidden"]
 
 
+def test_prefs_partial_renders_in_authed_pages(tmp_path, monkeypatch):
+    """W4.1+W4.3: WCAS_PREFS injection appears on every authenticated surface
+    and exposes the two safe fields (privacy_default, feed_dense_default).
+    Verified via the activity page using a session cookie + a tmp tenant root.
+    """
+    from dashboard_app.services import sessions, heartbeat_store
+
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    # Force fresh tenant_root resolution with the tmp path.
+    heartbeat_store._configure_root.cache_clear() if hasattr(heartbeat_store, "_configure_root") else None
+
+    cookie = sessions.issue(tenant_id="prefs_test", email="t@example.com", role="client")
+    name = sessions.cookie_kwargs()["key"]
+
+    r = client.get("/activity", cookies={name: cookie})
+    assert r.status_code == 200
+    assert "window.WCAS_PREFS" in r.text
+    assert "privacy_default" in r.text
+    assert "feed_dense_default" in r.text
+
+
+def test_prefs_partial_falls_through_when_prefs_absent():
+    """W4.1: public landing has no `prefs` in context; partial must NOT render
+    a malformed script block. Use the non-prefs-aware /healthz... actually
+    the public homepage is static, so use 404 placeholder which has no prefs.
+    """
+    r = client.get("/this-route-does-not-exist")
+    assert r.status_code == 404
+    assert "window.WCAS_PREFS" not in r.text
+
+
+def test_activity_renders_dense_toggle(tmp_path, monkeypatch):
+    """W4.5: /activity must expose .ap-feed__toggle-btn so shell.js can wire it.
+
+    Empty feed renders only the no-activity placeholder per service-layer
+    contract, so seed a heartbeat so the toggle markup is included.
+    """
+    from dashboard_app.services import sessions, heartbeat_store
+
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    if hasattr(heartbeat_store, "_configure_root"):
+        heartbeat_store._configure_root.cache_clear()
+    # Seed a heartbeat directly so feed has at least one row.
+    tenant_dir = tmp_path / "toggle_test" / "heartbeats"
+    tenant_dir.mkdir(parents=True, exist_ok=True)
+    (tenant_dir / "patrol.json").write_text(
+        '{"pipeline_id":"patrol","received_at":"2026-04-28T12:00:00+00:00",'
+        '"payload":{"status":"ok","summary":"Patrol completed.","last_run":"2026-04-28T12:00:00+00:00"}}',
+        encoding="utf-8",
+    )
+
+    cookie = sessions.issue(tenant_id="toggle_test", email="t@example.com", role="client")
+    name = sessions.cookie_kwargs()["key"]
+    r = client.get("/activity", cookies={name: cookie})
+    assert r.status_code == 200
+    assert "ap-feed__toggle-btn" in r.text
+    assert "Dense" in r.text and "Relaxed" in r.text
+
+
 def test_error_html_uses_team_not_first_name():
     """W2.5: error.html must say 'the team' not just bare 'Sam', so a tenant
     who has never met Sam doesn't read the error page as cryptic."""

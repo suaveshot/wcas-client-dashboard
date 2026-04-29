@@ -1,0 +1,25 @@
+{# Tenant prefs bridge.
+
+Renders a single inline <script> that exposes a small subset of the
+server-side `tenant_prefs.json` to client JS as `window.WCAS_PREFS`,
+so shell.js can read the owner's saved defaults (privacy mode, feed
+density) on the very first paint instead of waiting for a localStorage
+hit that won't exist on a fresh tab.
+
+Include this in the <head> of every authenticated page template. The
+including template must pass `prefs` (a dict with the standard keys)
+in the render context. Falls through silently if `prefs` is absent
+(e.g. the demo / preview surfaces) so this partial never breaks the
+public landing page.
+
+Only fields safe to expose to the browser go here. Per-pipeline
+require_approval is owner-private but not secret; even so, we keep
+this surface minimal until a JS feature actually needs more. #}
+{% if prefs is defined %}
+<script>
+  window.WCAS_PREFS = {
+    privacy_default: {{ ('true' if prefs.privacy_default else 'false') | safe }},
+    feed_dense_default: {{ ('true' if prefs.feed_dense_default else 'false') | safe }}
+  };
+</script>
+{% endif %}

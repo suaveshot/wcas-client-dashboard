@@ -818,11 +818,25 @@
     // BOOT
     // -----------------------------------------------------------------------
 
+    function _readPref(localKey, serverKey) {
+        // localStorage wins when it's been explicitly set on this device;
+        // otherwise fall back to the server-side tenant pref (rendered
+        // into window.WCAS_PREFS by templates/_prefs.html). This means a
+        // brand-new tab on a new device honors the owner's saved default
+        // immediately, instead of waiting for them to toggle once first.
+        var stored = null;
+        try { stored = localStorage.getItem(localKey); } catch (e) {}
+        if (stored === '1') return true;
+        if (stored === '0') return false;
+        var serverPrefs = (window.WCAS_PREFS || {});
+        return Boolean(serverPrefs[serverKey]);
+    }
+
     function restore() {
         try {
-            applyPrivacy(localStorage.getItem(LS_PRIVACY) === '1');
+            applyPrivacy(_readPref(LS_PRIVACY, 'privacy_default'));
             applyFocus(localStorage.getItem(LS_FOCUS) === '1');
-            applyFeedDensity(localStorage.getItem(LS_FEED_DENSE) === '1');
+            applyFeedDensity(_readPref(LS_FEED_DENSE, 'feed_dense_default'));
         } catch (e) {}
     }
 

@@ -8,7 +8,8 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/styles.css?v=20260422d">
+    <link rel="stylesheet" href="/static/styles.css?v=20260429a">
+    {% include "_prefs.html" %}
 </head>
 <body>
 <a href="#ap-main" class="ap-sr">Skip to main content</a>
@@ -48,6 +49,10 @@
                 <p class="ap-approvals__lead">Every automated action and every owner decision, newest first. This is the transparency feed at full length.</p>
 
                 {% if feed %}
+                <div class="ap-feed__toggle" role="tablist" aria-label="Feed density" style="display:flex; gap:4px; margin: 8px 0 16px; padding: 4px; background: var(--bg-alt); border-radius: 999px; width: fit-content; font-size: 13px;">
+                    <button type="button" class="ap-feed__toggle-btn" role="tab" aria-selected="true" style="border:0; background:transparent; padding: 6px 14px; border-radius: 999px; cursor:pointer; font:inherit;">Relaxed</button>
+                    <button type="button" class="ap-feed__toggle-btn" role="tab" aria-selected="false" style="border:0; background:transparent; padding: 6px 14px; border-radius: 999px; cursor:pointer; font:inherit;">Dense</button>
+                </div>
                 <div class="ap-feed" role="log" aria-live="polite">
                     {% for row in feed %}
                     <article class="ap-feed__row">

@@ -49,7 +49,7 @@ TEMPLATES_DIR = APP_DIR / "templates"
 app = FastAPI(
     title="WCAS Client Dashboard",
     description="Agency-level client activation + live automation telemetry.",
-    version="0.7.3",
+    version="0.7.4",
 )
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -549,6 +549,7 @@ async def roles_page(request: Request):
             "tenant_id": tenant_id,
             "tenant_name": home_context._display_from_slug(tenant_id),
             "roles": role_rows,
+            "prefs": tenant_prefs.read(tenant_id),
         },
     )
 
@@ -568,6 +569,7 @@ async def role_detail_page(request: Request, role_slug: str):
     tenant_id = sess["tid"] if sess else "americal_patrol"
     ctx = role_detail.build(tenant_id=tenant_id, role_slug=role_slug)
     ctx.setdefault("tenant_name", home_context._display_from_slug(tenant_id))
+    ctx.setdefault("prefs", tenant_prefs.read(tenant_id))
     return templates.TemplateResponse(request, "role_detail.html", ctx)
 
 
@@ -586,6 +588,7 @@ async def activity_page(request: Request):
             "tenant_id": tenant_id,
             "tenant_name": home_context._display_from_slug(tenant_id),
             "feed": feed,
+            "prefs": tenant_prefs.read(tenant_id),
         },
     )
 
@@ -629,6 +632,7 @@ async def recommendations_page(request: Request):
             "recs_source": source,
             "recs_generated_at": generated_at,
             "recs_model": rec_model,
+            "prefs": tenant_prefs.read(tenant_id),
         },
     )
 
@@ -696,6 +700,7 @@ async def goals_page(request: Request):
             "tenant_name": home_context._display_from_slug(tenant_id),
             "goals_list": goals_list,
             "can_add": len(goals_list) < goals_svc.MAX_GOALS,
+            "prefs": tenant_prefs.read(tenant_id),
         },
     )
 
@@ -745,6 +750,7 @@ async def approvals_page(request: Request):
             "tenant_name": home_context._display_from_slug(tenant_id),
             "drafts": enriched,
             "pending_count": len(enriched),
+            "prefs": tenant_prefs.read(tenant_id),
         },
     )
 
@@ -900,4 +906,5 @@ async def dashboard(request: Request) -> HTMLResponse:
     tenant_id = sess["tid"]
     owner = sess.get("em", "")
     ctx = home_context.build(tenant_id=tenant_id, owner_name=owner, tenant_display="")
+    ctx.setdefault("prefs", tenant_prefs.read(tenant_id))
     return templates.TemplateResponse(request, "home.html", ctx)
