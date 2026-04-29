@@ -605,4 +605,56 @@ This separation matters because:
 
 ---
 
+## ADR-030  -  wc_solns_pipelines as a sibling Python package, runs in dashboard container
+
+**Date:** 2026-04-29 (Phase 1 W2 foundation, post-W3)
+
+**Decision:** Generic per-tenant pipelines (the original W3 reviews/run.py, W4 gbp/run.py + seo/weekly_report.py, W5 email_assistant/run.py) live in a new top-level Python package `wc_solns_pipelines/` inside this same repo, sibling to `dashboard_app/`. They import directly from `dashboard_app.services` (credentials, tenant_kb, outgoing_queue, dispatch, voice_card, crm_mapping, etc.) instead of forking those modules. Pipelines deploy by riding the existing dashboard Docker image and run via `docker exec wcas-dashboard python -m wc_solns_pipelines.<name>.run --tenant <tenant_id>` triggered by VPS-side cron. The big plan's `wc-solns/shared/` and `wc-solns/pipelines/` paths map to `wc_solns_pipelines/shared/` and `wc_solns_pipelines/pipelines/` (snake_case for Python module compatibility).
+
+**Why:**
+
+- **Reuse, don't fork.** The dashboard already has battle-tested per-tenant infrastructure: `services.credentials` does atomic writes + chmod 600 + path-traversal guards, `services.tenant_kb` enforces a section whitelist, `services.outgoing_queue` has guardrails + atomic JSONL + lock, `services.dispatch` (W3) is the canonical pause + require_approval + handler-registry seam. Forking these into a parallel `wc-solns/shared/` would create two sources of truth that drift. Pipeline code consuming the same Python objects guarantees they stay in sync.
+- **One Docker image, one deploy.** A separate `wc-solns/` repo would mean a second Dockerfile, a second image build pipeline, a second docker-compose service, and a second `git pull` step. For ~10 small pipelines that share 95% of their dependencies (httpx, pydantic, anthropic, pyairtable), the operational cost of split repos buys nothing today and adds friction.
+- **Sibling package, not nested.** Putting pipelines under `dashboard_app/pipelines/` would conflate the FastAPI surface with the cron-triggered orchestration. Sibling layout (`dashboard_app/` + `wc_solns_pipelines/`) keeps the FastAPI router map clean and signals that the pipeline package is a separate concern that just happens to share infrastructure code.
+- **Forward-compatible HTTP heartbeat.** `wc_solns_pipelines/shared/push_heartbeat.py` POSTs to `/api/heartbeat` over HTTP rather than calling `heartbeat_store.write_snapshot()` directly. Today both paths land at the same row on disk; the HTTP wrapper is "extra work" in the in-process case. The reason: the day a pipeline lives in a separate container or on a separate VM (e.g., a heavy SEO crawler that needs its own resources), the HTTP contract is unchanged. AP's `Americal Patrol/shared/push_heartbeat.py` already does HTTP because AP runs on Sam's PC, not the WCAS VPS - keeping the same contract for new pipelines means the dashboard surface stays uniform.
+- **Cron lives in the wcas-dashboard container's host VPS, not in-app.** The `/docker/wcas-dashboard/` host directory hosts a `crontab.d/` snippet per tenant per pipeline, e.g. `0 10 1 * * docker exec wcas-dashboard python -m wc_solns_pipelines.reviews.run --tenant garcia_folklorico`. Per-tenant scheduling instead of per-pipeline-shared-schedule (Phase 2D in the big plan).
+
+**Layout:**
+
+```
+wcas-client-dashboard/
+  dashboard_app/                 # the FastAPI surface (existing)
+    services/
+    api/
+    templates/
+    static/
+  wc_solns_pipelines/            # NEW (this ADR)
+    __init__.py
+    shared/
+      __init__.py
+      tenant_runtime.py          # TenantContext - thin facade over services
+      push_heartbeat.py          # HTTP heartbeat POST, multi-tenant
+    pipelines/                   # populated incrementally W3.x-W5
+      __init__.py
+      reviews/                   # W3.x (re-homed original W3 deliverable)
+      gbp/                       # W4
+      seo/                       # W4
+      email_assistant/           # W5
+  tests/                         # shared tests dir, test_*.py per module
+```
+
+**Trade-offs:**
+
+- **Coupling.** Pipelines depend on `dashboard_app.services` imports. If a pipeline ever needs to run on a host that doesn't ship the dashboard code, this breaks. Mitigation: when (if) that day comes, extract the consumed services into a shared `wcas_core` package both repos depend on. Today that's premature.
+- **Single point of failure.** A bug in `dashboard_app.services.outgoing_queue` would affect both the FastAPI approve flow AND every pipeline that enqueues drafts. The flip side is one place to fix the bug. Tests cover both paths in the same suite.
+- **Shared dependency graph.** Adding a heavy pipeline-only dep (e.g., a GA4 SDK) bloats the dashboard image. Acceptable today; revisit if a pipeline pulls a >50 MB dep that the FastAPI layer doesn't need.
+
+**Post-hackathon evolution:**
+
+- If a single pipeline outgrows the shared image (CPU/RAM/dep weight), promote it to its own service in docker-compose, still in this repo - same Dockerfile target, different ENTRYPOINT.
+- If `wcas_core` extraction becomes warranted (e.g., a separate repo for a different client's pipelines), do it then. Don't pre-design for it.
+- Watchdog (Phase 2F) will be its own sibling package, same pattern - imports from `dashboard_app.services` to read heartbeat snapshots, runs as cron.
+
+---
+
 *More ADRs added as decisions are made during the build.*
