@@ -43,6 +43,7 @@ from . import (
     heartbeat_store,
     tenant_automations,
     tenant_kb,
+    tenant_schedule,
     validation_probe,
     voice_card,
 )
@@ -712,6 +713,7 @@ def _mark_activation_complete(tenant_id: str, args: dict[str, Any]) -> dict[str,
     # right automations. Failures here are logged but don't block the
     # activation flag flip - state is the source of truth.
     seeded_count = 0
+    schedule_count = 0
     seed_error: str | None = None
     if tier:
         if tier not in automation_catalog.VALID_TIERS:
@@ -725,6 +727,18 @@ def _mark_activation_complete(tenant_id: str, args: dict[str, Any]) -> dict[str,
             except tenant_automations.TenantAutomationsError as exc:
                 seed_error = str(exc)
                 log.warning("seed_for_tier failed tenant=%s tier=%s: %s",
+                            tenant_id, tier, exc)
+            # Schedule seeding is independent of the automations seeding
+            # so a failure on either side never silently breaks the other.
+            try:
+                schedule_entries = tenant_schedule.seed_for_tier(tenant_id, tier)
+                schedule_count = sum(
+                    1 for e in schedule_entries if e.get("source") == "tier_default"
+                )
+            except tenant_schedule.ScheduleError as exc:
+                if seed_error is None:
+                    seed_error = str(exc)
+                log.warning("schedule seed_for_tier failed tenant=%s tier=%s: %s",
                             tenant_id, tier, exc)
 
     state = activation_state.mark_complete(tenant_id, note=note or None)
@@ -748,6 +762,7 @@ def _mark_activation_complete(tenant_id: str, args: dict[str, Any]) -> dict[str,
         "role_count": len(state.get("roles", {})),
         "tier": tier,
         "tier_default_count": seeded_count,
+        "schedule_default_count": schedule_count,
         "tier_seed_error": seed_error,
         "handoff_sent": handoff_sent,
         "note": note

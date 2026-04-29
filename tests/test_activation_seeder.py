@@ -14,6 +14,7 @@ from dashboard_app.services import (
     automation_catalog as cat,
     handoff,
     tenant_automations,
+    tenant_schedule,
 )
 
 
@@ -145,6 +146,32 @@ def test_unknown_tier_is_reported_but_does_not_block_activation(tenant_root):
 # ---------------------------------------------------------------------------
 # handoff letter sees the seeded tier
 # ---------------------------------------------------------------------------
+
+
+def test_schedule_seeded_alongside_automations(tenant_root):
+    """When tier is supplied, BOTH automations.json and schedule.json get
+    seeded. The dispatcher will need both."""
+    ok, payload = activation_tools.dispatch(
+        "garcia_folklorico",
+        "mark_activation_complete",
+        {"tier": "pro"},
+    )
+    assert ok is True
+    assert payload["schedule_default_count"] > 0
+    schedule_entries = tenant_schedule.list_entries("garcia_folklorico")
+    assert any(e["pipeline_id"] == "seo_recs" for e in schedule_entries)
+    # Cron strings must be valid for every seeded entry.
+    for e in schedule_entries:
+        assert tenant_schedule.is_valid_cron(e["cron"])
+
+
+def test_schedule_seed_idempotent_across_completions(tenant_root):
+    activation_tools.dispatch("acme", "mark_activation_complete", {"tier": "starter"})
+    tenant_schedule.set_entry("acme", "reviews", "0 7 * * *", source="owner_change")
+    activation_tools.dispatch("acme", "mark_activation_complete", {"tier": "starter"})
+    reviews = tenant_schedule.get_entry("acme", "reviews")
+    # Owner's cron change survives re-completion.
+    assert reviews["cron"] == "0 7 * * *"
 
 
 def test_handoff_sees_seeded_tier_when_completing(tenant_root, monkeypatch):
