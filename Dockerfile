@@ -23,6 +23,11 @@ COPY --chown=app:app dashboard_app ./dashboard_app
 # imports scripts.sanitize_for_demo, (b) docker exec ... python scripts/*
 # for ops tasks (sanitize --check/--write, seed_* helpers, refresh_recs).
 COPY --chown=app:app scripts ./scripts
+# wc_solns_pipelines/ ships the per-tenant pipelines (sales, reviews, gbp,
+# email_assistant, seo) and the platform-level runners (dispatcher,
+# watchdog_digest, daily orchestrator). The host crontab invokes these via
+# `docker exec wcas-dashboard python -m wc_solns_pipelines.platform.dispatcher`.
+COPY --chown=app:app wc_solns_pipelines ./wc_solns_pipelines
 
 USER app
 
