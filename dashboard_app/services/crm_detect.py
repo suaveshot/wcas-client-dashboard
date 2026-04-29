@@ -114,7 +114,7 @@ _FINGERPRINTS: tuple[_Fingerprint, ...] = (
 
 # CRMs we currently have a provider implementation for. Used to make
 # the recommendation field actionable instead of just descriptive.
-SUPPORTED_PROVIDERS: frozenset[str] = frozenset({"ghl"})
+SUPPORTED_PROVIDERS: frozenset[str] = frozenset({"ghl", "hubspot", "pipedrive"})
 
 
 def _fetch_html(url: str, *, http_get: Callable[..., Any]) -> tuple[str, dict[str, str], str]:
@@ -170,14 +170,29 @@ def _scan_fingerprints(
 
 
 def _credential_signal(tenant_id: str | None) -> str | None:
-    """Return the CRM id the tenant has stored credentials for, or None."""
+    """Return the CRM id the tenant has stored credentials for, or None.
+
+    Only the first usable credential set wins; if a tenant has BOTH a
+    GHL key and a HubSpot token (rare), GHL takes precedence because
+    it covers comms + CRM in one provider. Adjust the order here as
+    multi-CRM tenants become a real shape.
+    """
     if not tenant_id:
         return None
-    # Only GHL has a CRM-credentials slot today. As we add HubSpot/Pipedrive
-    # paste credentials, append them here.
-    creds = _credentials.load(tenant_id, "ghl")
-    if creds and creds.get("api_key") and creds.get("location_id"):
+
+    ghl = _credentials.load(tenant_id, "ghl")
+    if ghl and ghl.get("api_key") and ghl.get("location_id"):
         return "ghl"
+
+    hubspot = _credentials.load(tenant_id, "hubspot")
+    if hubspot and (hubspot.get("access_token") or hubspot.get("api_key")):
+        return "hubspot"
+
+    pipedrive = _credentials.load(tenant_id, "pipedrive")
+    if pipedrive and (pipedrive.get("api_token") or pipedrive.get("api_key")) \
+            and pipedrive.get("company_domain"):
+        return "pipedrive"
+
     return None
 
 
@@ -185,7 +200,11 @@ def _recommend(detected: str, candidates: list[str]) -> str:
     """One-sentence string the agent surfaces back to the owner."""
     if detected == "ghl":
         return "Use the existing GHL CRM via GHLProvider; no new account needed."
-    if detected in {"hubspot", "salesforce", "pipedrive", "zoho"}:
+    if detected == "hubspot":
+        return "Use the existing HubSpot CRM via HubSpotProvider; paste a private app token to connect."
+    if detected == "pipedrive":
+        return "Use the existing Pipedrive CRM via PipedriveProvider; paste an API token to connect."
+    if detected in {"salesforce", "zoho"}:
         return (
             f"{detected.title()} detected. Connect read-only at the agency's "
             f"convenience; WCAS will sync without migrating data."

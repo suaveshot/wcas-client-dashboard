@@ -49,7 +49,7 @@ TEMPLATES_DIR = APP_DIR / "templates"
 app = FastAPI(
     title="WCAS Client Dashboard",
     description="Agency-level client activation + live automation telemetry.",
-    version="0.7.11",
+    version="0.7.12",
 )
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

@@ -183,6 +183,46 @@ _SPECS: dict[str, PasteSpec] = {
         ),
         docs_url="https://docs.vapi.ai/",
     ),
+    "hubspot": PasteSpec(
+        service="hubspot",
+        label="HubSpot",
+        fields=(
+            PasteField(name="access_token", label="Private app access token",
+                       type="password", placeholder="pat-na1-..."),
+            PasteField(name="portal_id", label="Portal (Hub) ID",
+                       required=False, placeholder="12345678"),
+            PasteField(name="from_email", label="Default sender email",
+                       type="email", required=False,
+                       placeholder="hello@yourbusiness.com"),
+        ),
+        instructions=(
+            "In HubSpot, open Settings, then Integrations, then Private Apps. "
+            "Create an app with the crm.objects.contacts.read/write, "
+            "crm.objects.deals.read/write, and conversations scopes. Copy the "
+            "access token here. Your Portal ID is in the URL after /portal/."
+        ),
+        docs_url="https://developers.hubspot.com/docs/api/private-apps",
+    ),
+    "pipedrive": PasteSpec(
+        service="pipedrive",
+        label="Pipedrive",
+        fields=(
+            PasteField(name="api_token", label="Personal API token",
+                       type="password"),
+            PasteField(name="company_domain", label="Company domain",
+                       placeholder="acme-llc"),
+            PasteField(name="from_email", label="Default sender email",
+                       type="email", required=False,
+                       placeholder="hello@yourbusiness.com"),
+        ),
+        instructions=(
+            "In Pipedrive, click your avatar, then Personal Preferences, "
+            "then API. Copy the personal API token. Your company domain is "
+            "the subdomain in your Pipedrive URL (e.g. 'acme-llc' from "
+            "acme-llc.pipedrive.com)."
+        ),
+        docs_url="https://pipedrive.readme.io/docs/how-to-find-the-api-token",
+    ),
     "wordpress": PasteSpec(
         service="wordpress",
         label="WordPress",
@@ -208,6 +248,8 @@ _SPECS: dict[str, PasteSpec] = {
 UNLOCKS: dict[str, str] = {
     "gmail_app_password": "Email assistant drafts, inbox monitoring, and outbound replies.",
     "ghl": "CRM contact lookups, conversation history, and message sending.",
+    "hubspot": "CRM contact lookups, deal stage tracking, and quote view detection.",
+    "pipedrive": "CRM contact lookups, deal stage tracking, and notes-as-conversation history.",
     "airtable": "Schema-aware automation suggestions tied to the client's existing CRM.",
     "brightlocal": "Local-pack rank tracking that powers SEO recommendations.",
     "twilio_paste": "SMS dispatch on the client's own phone number for review requests.",

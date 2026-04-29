@@ -53,6 +53,8 @@ PASTE_PROVIDERS: frozenset[str] = frozenset({
     "brightlocal",
     "airtable",
     "ghl",
+    "hubspot",
+    "pipedrive",
 })
 
 # Google access tokens live 3600s. Cache for 50 min so the next refresh

@@ -73,7 +73,8 @@ def test_detects_hubspot_via_hs_scripts():
     )
     assert out["detected"] == "hubspot"
     assert out["confidence"] == "high"
-    assert out["supported"] is False  # no provider yet
+    # HubSpotProvider shipped in Phase 2E - hubspot is now actionable.
+    assert out["supported"] is True
 
 
 def test_detects_hubspot_via_response_header():
@@ -198,6 +199,50 @@ def test_credentials_override_site_signals(tmp_path, monkeypatch):
     # Both CRMs surface as candidates so the orchestrator can flag the conflict.
     assert "ghl" in out["candidates"]
     assert "hubspot" in out["candidates"]
+
+
+def test_stored_hubspot_credentials_force_high_confidence(tmp_path, monkeypatch):
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    _credentials.store_paste("acme", "hubspot", {"access_token": "pat-xyz"})
+    out = crm_detect.detect(
+        "https://acme.test/",
+        tenant_id="acme",
+        http_get=_http(body="<html>plain</html>"),
+    )
+    assert out["detected"] == "hubspot"
+    assert out["confidence"] == "high"
+    assert out["supported"] is True
+    assert "HubSpotProvider" in out["recommendation"]
+
+
+def test_stored_pipedrive_credentials_force_high_confidence(tmp_path, monkeypatch):
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    _credentials.store_paste(
+        "acme",
+        "pipedrive",
+        {"api_token": "pd-xyz", "company_domain": "acme-llc"},
+    )
+    out = crm_detect.detect(
+        "https://acme.test/",
+        tenant_id="acme",
+        http_get=_http(body="<html>plain</html>"),
+    )
+    assert out["detected"] == "pipedrive"
+    assert out["confidence"] == "high"
+    assert out["supported"] is True
+    assert "PipedriveProvider" in out["recommendation"]
+
+
+def test_pipedrive_credentials_without_company_domain_skipped(tmp_path, monkeypatch):
+    """Pipedrive needs both token AND company_domain to be usable."""
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    _credentials.store_paste("acme", "pipedrive", {"api_token": "pd-xyz"})
+    out = crm_detect.detect(
+        "https://acme.test/",
+        tenant_id="acme",
+        http_get=_http(body="<html>plain</html>"),
+    )
+    assert out["detected"] != "pipedrive"
 
 
 def test_partial_credentials_do_not_count(tmp_path, monkeypatch):
