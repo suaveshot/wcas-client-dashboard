@@ -44,11 +44,15 @@ import json
 import logging
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from . import automation_catalog, heartbeat_store
+
+# Reused for tenant directory iteration in list_due_all. Mirrors the
+# slug regex used by heartbeat_store.tenant_root.
+_SAFE_TENANT_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 log = logging.getLogger(__name__)
 
@@ -117,6 +121,172 @@ def is_valid_cron(expr: str) -> bool:
         _validate_cron_field(parts[i], lo, hi)
         for i, (lo, hi) in enumerate(_FIELD_RANGES)
     )
+
+
+# ---------------------------------------------------------------------------
+# cron matcher (Phase 2D dispatcher)
+# ---------------------------------------------------------------------------
+
+
+def _expand_cron_field(token: str, lo: int, hi: int) -> set[int] | None:
+    """Expand a single cron field into the set of matching ints.
+
+    Supports:
+      - `*` wildcard
+      - exact integer (e.g. `5`)
+      - range (e.g. `9-17`)
+      - step (e.g. `*/15`, `0-30/5`)
+      - comma-separated list of any of the above (e.g. `0,15,30,45`)
+
+    Returns None on malformed input. Out-of-range values are treated as
+    malformed (we keep behavior strict so `cron_matches` never silently
+    matches something the validator rejects).
+    """
+    if not isinstance(token, str) or not token:
+        return None
+    matched: set[int] = set()
+    for piece in token.split(","):
+        if not _TOKEN_RE.match(piece):
+            return None
+        head, _, step_s = piece.partition("/")
+        try:
+            step = int(step_s) if step_s else 1
+        except ValueError:
+            return None
+        if step <= 0:
+            return None
+        if head == "*":
+            a, b = lo, hi
+        elif "-" in head:
+            a_s, b_s = head.split("-", 1)
+            try:
+                a, b = int(a_s), int(b_s)
+            except ValueError:
+                return None
+            if not (lo <= a <= hi and lo <= b <= hi and a <= b):
+                return None
+        else:
+            try:
+                v = int(head)
+            except ValueError:
+                return None
+            if not (lo <= v <= hi):
+                return None
+            # A bare integer with `/N` is unusual; treat as single value.
+            matched.add(v)
+            continue
+        for n in range(a, b + 1, step):
+            matched.add(n)
+    return matched
+
+
+def cron_matches(cron_expr: str, now: datetime) -> bool:
+    """True when `cron_expr` would fire at the given `now` minute.
+
+    Standard 5-field cron: `minute hour day-of-month month day-of-week`.
+    `now` is compared in its own timezone (callers should pass UTC for
+    consistency with how the dispatcher reasons about ticks). Malformed
+    expressions return False and never raise.
+
+    Day-of-week uses cron convention: 0 = Sunday, 6 = Saturday.
+    Python's `datetime.weekday()` returns 0 = Monday, so we remap.
+    """
+    if not isinstance(cron_expr, str) or not isinstance(now, datetime):
+        return False
+    parts = cron_expr.strip().split()
+    if len(parts) != 5:
+        return False
+    minute_set = _expand_cron_field(parts[0], *_FIELD_RANGES[0])
+    hour_set = _expand_cron_field(parts[1], *_FIELD_RANGES[1])
+    dom_set = _expand_cron_field(parts[2], *_FIELD_RANGES[2])
+    month_set = _expand_cron_field(parts[3], *_FIELD_RANGES[3])
+    dow_set = _expand_cron_field(parts[4], *_FIELD_RANGES[4])
+    if any(s is None for s in (minute_set, hour_set, dom_set, month_set, dow_set)):
+        return False
+
+    # cron weekday: 0=Sun..6=Sat. Python: 0=Mon..6=Sun.
+    py_wd = now.weekday()
+    cron_wd = (py_wd + 1) % 7
+
+    return (
+        now.minute in minute_set
+        and now.hour in hour_set
+        and now.day in dom_set
+        and now.month in month_set
+        and cron_wd in dow_set
+    )
+
+
+def list_due(
+    tenant_id: str,
+    now: datetime,
+    *,
+    tolerance_minutes: int = 0,
+) -> list[dict[str, Any]]:
+    """Enabled schedule entries for `tenant_id` that are due at `now`.
+
+    A `tolerance_minutes` window covers catch-up after a missed cron tick
+    (e.g. host briefly offline): if any minute in
+    `[now - tolerance_minutes, now]` would have matched the cron, the
+    entry is considered due. Default 0 means strict same-minute match.
+    """
+    if not isinstance(now, datetime):
+        return []
+    try:
+        tol = max(0, int(tolerance_minutes))
+    except (TypeError, ValueError):
+        tol = 0
+    entries = list_entries(tenant_id, enabled_only=True)
+    due: list[dict[str, Any]] = []
+    for entry in entries:
+        cron = entry.get("cron")
+        if not isinstance(cron, str):
+            continue
+        matched = False
+        for offset in range(tol + 1):
+            candidate = now - timedelta(minutes=offset)
+            if cron_matches(cron, candidate):
+                matched = True
+                break
+        if matched:
+            due.append(dict(entry))
+    return due
+
+
+def list_due_all(
+    now: datetime,
+    *,
+    tolerance_minutes: int = 0,
+) -> dict[str, list[dict[str, Any]]]:
+    """Iterate every tenant directory under `TENANT_ROOT` and return a
+    `{tenant_id: [due_entries]}` mapping. Tenants with no due entries
+    are filtered out.
+
+    Skips any directory whose name starts with `_` (e.g. `_platform`,
+    `_archive`) - those are platform-managed dirs, not real tenants.
+    Invalid tenant slugs are silently skipped (defensive: a stray file
+    or weirdly-named dir shouldn't take down the dispatcher).
+    """
+    base = Path(os.getenv("TENANT_ROOT", "/opt/wc-solns"))
+    if not base.exists() or not base.is_dir():
+        return {}
+    out: dict[str, list[dict[str, Any]]] = {}
+    for child in sorted(base.iterdir()):
+        if not child.is_dir():
+            continue
+        tenant_id = child.name
+        if tenant_id.startswith("_"):
+            continue
+        if not _SAFE_TENANT_RE.match(tenant_id):
+            continue
+        try:
+            due = list_due(tenant_id, now, tolerance_minutes=tolerance_minutes)
+        except Exception as exc:  # noqa: BLE001 - dispatcher must keep walking
+            log.warning("list_due failed for tenant %s: %s", tenant_id, exc)
+            continue
+        if due:
+            out[tenant_id] = due
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -387,12 +557,15 @@ __all__ = [
     "SCHEMA_VERSION",
     "VALID_SOURCES",
     "ScheduleError",
+    "cron_matches",
     "default_cron_for",
     "disable",
     "enable",
     "get_entry",
     "is_enabled",
     "is_valid_cron",
+    "list_due",
+    "list_due_all",
     "list_entries",
     "remove",
     "seed_for_tier",
