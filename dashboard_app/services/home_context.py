@@ -29,7 +29,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from . import activity_feed, hero_stats, notifications, rec_actions, recent_asks, recs_store, seeded_recs, telemetry
+from . import activity_feed, automation_catalog, hero_stats, notifications, rec_actions, recent_asks, recs_store, seeded_recs, telemetry, tenant_automations
 
 
 _SPARK_UP = "M0,22 L15,18 L30,20 L45,14 L60,16 L75,10 L90,12 L105,7 L120,9 L135,5 L150,7 L165,3 L180,5 L200,2"
@@ -111,24 +111,68 @@ def build(tenant_id: str, owner_name: str = "", tenant_display: str = "") -> dic
     display_name = tenant_display or _display_from_slug(tenant_id)
     initials = _initials(owner_name) if owner_name else _initials(display_name)
 
-    roles = []
-    snapshots_by_pid: dict[str, float] = {}
+    enabled_ids = tenant_automations.enabled_ids(tenant_id)
+    snapshots_by_pid: dict[str, dict[str, Any]] = {s["pipeline_id"]: s for s in snapshots}
+    age_by_pid: dict[str, float] = {}
+
+    roles: list[dict[str, Any]] = []
+    rendered: set[str] = set()
+
+    if enabled_ids:
+        # New path: catalog drives the ring set. Heartbeats fill in state.
+        for aid in enabled_ids:
+            entry = automation_catalog.get(aid)
+            if entry is None:
+                continue
+            snap = snapshots_by_pid.get(aid)
+            if snap is not None:
+                last_run_text, age_hours = _humanize_ago(snap.get("last_run", ""))
+                age_by_pid[aid] = age_hours
+                state, state_text, grade, spark = _state_from_status(
+                    snap.get("status", ""), age_hours
+                )
+            else:
+                last_run_text, age_hours = "queued", 0.0
+                age_by_pid[aid] = age_hours
+                state, state_text, grade, spark = "pending", "pending first run", None, _SPARK_FLAT
+            roles.append({
+                "slug": aid.replace("_", "-"),
+                "name": entry.name,
+                "state": state,
+                "state_text": state_text,
+                "actions": 0,
+                "influenced": "0",
+                "last_run": last_run_text,
+                "grade": grade,
+                "spark_path": spark,
+            })
+            rendered.add(aid)
+
+    # Backward-compat path for tenants without an automations.json
+    # (e.g. AP today): render every heartbeat we got, even if it's not
+    # in the catalog yet. Also catches any heartbeats from pipelines
+    # that aren't in the enabled list (so admin debugging stays visible).
     for snap in snapshots:
         pid = snap["pipeline_id"]
+        if pid in rendered:
+            continue
         last_run_text, age_hours = _humanize_ago(snap.get("last_run", ""))
-        snapshots_by_pid[pid] = age_hours
+        age_by_pid[pid] = age_hours
         state, state_text, grade, spark = _state_from_status(snap.get("status", ""), age_hours)
+        catalog_entry = automation_catalog.get(pid)
         roles.append({
             "slug": pid.replace("_", "-"),
-            "name": _role_display(pid),
+            "name": catalog_entry.name if catalog_entry else _role_display(pid),
             "state": state,
             "state_text": state_text,
-            "actions": 0,  # Day 3: summarized per-pipeline action count
+            "actions": 0,
             "influenced": "0",
             "last_run": last_run_text,
             "grade": grade,
             "spark_path": spark,
         })
+
+    snapshots_by_pid_age = age_by_pid  # rename for downstream code that expected the older variable
 
     # Attention banner: pick the most urgent errored or overdue role, if any.
     attention = None
@@ -177,7 +221,7 @@ def build(tenant_id: str, owner_name: str = "", tenant_display: str = "") -> dic
         "today_date": datetime.now().strftime("%Y-%m-%d"),
         "refresh_ago": "just now" if has_live else "waiting",
         "next_refresh": "on the next pipeline run",
-        "pinned_roles": _pinned_from_roles(roles, snapshots_by_pid),
+        "pinned_roles": _pinned_from_roles(roles, snapshots_by_pid_age),
         "rail_health": _rail_health(roles),
         "recent_asks": recent_asks.recent(tenant_id, n=3),
         "notifications_count": notifications.count(tenant_id),

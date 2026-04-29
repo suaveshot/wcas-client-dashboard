@@ -35,8 +35,10 @@ from . import (
     audit_log,
     clients_repo,
     credentials,
+    crm_detect,
     crm_mapping,
     email_sender,
+    handoff,
     heartbeat_store,
     tenant_kb,
     validation_probe,
@@ -297,6 +299,18 @@ def _detect_website_platform(tenant_id: str, args: dict[str, Any]) -> dict[str, 
         "takeover_feasible": takeover_feasible,
         "notes": " ".join(notes) if notes else "",
     }
+
+
+def _detect_crm(tenant_id: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Classify the tenant's CRM (GHL, HubSpot, Pipedrive, etc.) so the
+    orchestrator can decide whether to wire WCAS to an existing system or
+    queue a connect prompt. Combines public site fingerprints with any
+    credentials the tenant has already pasted (those override site signals).
+    """
+    url = (args.get("url") or "").strip()
+    if not url:
+        raise ToolError("url is required")
+    return crm_detect.detect(url, tenant_id=tenant_id)
 
 
 def _confirm_company_facts(tenant_id: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -674,13 +688,38 @@ def _propose_crm_mapping(tenant_id: str, args: dict[str, Any]) -> dict[str, Any]
 
 
 def _mark_activation_complete(tenant_id: str, args: dict[str, Any]) -> dict[str, Any]:
-    """Mark the tenant as activated. First-run rings stay to be filled as pipelines execute."""
+    """Mark the tenant as activated. First-run rings stay to be filled as pipelines execute.
+
+    When owner_name + owner_email are supplied, also emails the one-page
+    handoff letter. The letter send is best-effort: a failure here does
+    not roll back the activation flag (the state is the source of truth,
+    the email is a deliverable on top).
+    """
     note = (args.get("note") or "").strip()
+    owner_name = (args.get("owner_name") or "").strip()
+    owner_email = (args.get("owner_email") or "").strip()
+    business_name = (args.get("business_name") or "").strip() or None
+
     state = activation_state.mark_complete(tenant_id, note=note or None)
+
+    handoff_sent = False
+    if owner_name and owner_email:
+        try:
+            handoff_sent = handoff.send_handoff(
+                tenant_id=tenant_id,
+                owner_name=owner_name,
+                owner_email=owner_email,
+                business_name=business_name,
+            )
+        except Exception as exc:
+            log.warning("handoff send failed for tenant=%s: %s", tenant_id, exc)
+            handoff_sent = False
+
     return {
         "status": "activated",
         "activated_at": state.get("activated_at"),
         "role_count": len(state.get("roles", {})),
+        "handoff_sent": handoff_sent,
         "note": note
         or "Activation wizard complete. Pipelines will fill their first-run rings as they execute.",
     }
@@ -993,11 +1032,17 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     _custom(
         "mark_activation_complete",
         "Flip the tenant to activated state. Call only when the owner has confirmed "
-        "they're done for the session. Non-destructive: further tool calls are allowed.",
+        "they're done for the session. Non-destructive: further tool calls are allowed. "
+        "When owner_name + owner_email are supplied, also emails the one-page handoff "
+        "letter ('what we just turned on, what happens this week, who to ping'). The "
+        "letter send is best-effort: a failure does not roll back activation.",
         {
             "type": "object",
             "properties": {
                 "note": {"type": "string", "description": "Optional one-sentence summary the owner will see."},
+                "owner_name": {"type": "string", "description": "Owner's name as confirmed during activation. Required to send the handoff letter."},
+                "owner_email": {"type": "string", "description": "Owner's email. Required to send the handoff letter."},
+                "business_name": {"type": "string", "description": "Trade name to address the letter to. Defaults to owner_name when absent."},
             },
         },
     ),
@@ -1143,6 +1188,24 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
 
     # ---- §4 Discovery + §5 provisioning plan --------------------------------
     _custom(
+        "detect_crm",
+        "Classify what CRM the tenant already runs (GHL, HubSpot, Pipedrive, "
+        "Salesforce, Zoho, Intercom, Calendly, none, unknown) so the orchestrator "
+        "can either wire WCAS to it or queue a connect prompt. Combines public "
+        "site fingerprints with any credentials the tenant has already pasted - "
+        "stored credentials always win. Returns detected, confidence, signals, "
+        "candidates, recommendation, and supported (whether WCAS has a working "
+        "provider for that CRM today). Use BEFORE record_provisioning_plan so "
+        "the plan can reference the right CRM.",
+        {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "Homepage URL of the tenant's site."},
+            },
+            "required": ["url"],
+        },
+    ),
+    _custom(
         "detect_website_platform",
         "Classify the client's website by platform (WordPress / Shopify / Wix / "
         "Squarespace / Webflow / GHL-hosted / static / unknown) + guess the host "
@@ -1202,6 +1265,7 @@ HANDLERS: dict[str, Callable[[str, dict[str, Any]], dict[str, Any]]] = {
     # Fully implemented
     "fetch_site_facts": _fetch_site_facts,
     "detect_website_platform": _detect_website_platform,
+    "detect_crm": _detect_crm,
     "confirm_company_facts": _confirm_company_facts,
     "write_kb_entry": _write_kb_entry,
     "record_provisioning_plan": _record_provisioning_plan,

@@ -995,6 +995,15 @@ a:hover { color: var(--accent-deep); }
 .ap-role-card--attention { border-color: rgba(233, 123, 46, 0.4); }
 .ap-role-card--error { border-color: rgba(201, 56, 56, 0.3); }
 .ap-role-card--paused { opacity: 0.6; }
+.ap-role-card--pending { border-color: var(--border-soft); opacity: 0.85; }
+.ap-role-card--pending .ap-role-card__dot {
+  background: var(--ink-faint);
+  box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.04);
+}
+.ap-role-card--pending .ap-role-card__spark path {
+  stroke: var(--ink-faint);
+  stroke-dasharray: 4 3;
+}
 
 .ap-role-card__head {
   display: flex;

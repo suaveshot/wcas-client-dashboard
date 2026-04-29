@@ -52,6 +52,7 @@ PASTE_PROVIDERS: frozenset[str] = frozenset({
     "twilio_paste",
     "brightlocal",
     "airtable",
+    "ghl",
 })
 
 # Google access tokens live 3600s. Cache for 50 min so the next refresh
