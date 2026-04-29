@@ -195,6 +195,21 @@ def test_errored_takes_precedence_over_overdue(tenant_root):
     assert reviews_issues[0].kind == tw.ISSUE_ERRORED
 
 
+def test_naive_iso_heartbeat_does_not_crash(tenant_root):
+    """AP pipelines on the PC write heartbeats without a tz suffix.
+    The watchdog must treat them as UTC instead of crashing on
+    'can't subtract offset-naive and offset-aware datetimes'.
+    """
+    tenant_schedule.seed_for_tier("acme", "starter")
+    naive = (_NOW() - timedelta(hours=30)).replace(tzinfo=None).isoformat()
+    assert "+" not in naive and "Z" not in naive  # confirm naive format
+    _heartbeat("acme", "reviews", status="ok", last_run=naive)
+    # Must not raise; must still detect the staleness as overdue.
+    issues = tw.evaluate_tenant("acme", now=_NOW())
+    overdue = [i for i in issues if i.kind == tw.ISSUE_OVERDUE]
+    assert any(i.pipeline_id == "reviews" for i in overdue)
+
+
 # ---------------------------------------------------------------------------
 # evaluate_tenant - missing first run
 # ---------------------------------------------------------------------------

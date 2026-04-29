@@ -202,9 +202,15 @@ def _parse_iso(s: str) -> datetime | None:
         return None
     try:
         # Tolerate both "...Z" and "...+00:00" suffixes.
-        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
     except (TypeError, ValueError):
         return None
+    # AP pipelines on the PC write heartbeats without a tz suffix; treat
+    # any naive datetime as UTC so _hours_since does not raise
+    # "can't subtract offset-naive and offset-aware datetimes" downstream.
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 def _hours_since(when: datetime, now: datetime) -> float:
