@@ -71,18 +71,22 @@ if git diff --cached | grep -Pq "$SECRET_REGEX"; then
 fi
 
 # 3. Block em dashes in code/content files.
-#    Allowlist: detection files that must literally contain the char.
-EMDASH_ALLOWLIST='(tests/test_smoke\.py|\.githooks/pre-commit|docs/ci-templates/security\.yml\.template)'
+#    Catches the literal U+2014 char AND HTML-entity encodings
+#    (&mdash;, &#8212;, &#x2014;) that auto-paste from word processors.
+#    Allowlist: detection files that must literally contain the char,
+#    plus internal docs (audits/, JOURNAL.md) that quote the patterns
+#    when documenting brand-rule violations.
+EMDASH_ALLOWLIST='(tests/test_smoke\.py|\.githooks/pre-commit|docs/ci-templates/security\.yml\.template|^audits/|/audits/|JOURNAL\.md$)'
 emdash_hits=$(
   git diff --cached --name-only --diff-filter=ACM \
     | grep -E '\.(py|html|md|css|js|yml|yaml|sh)$' \
     | grep -Ev "$EMDASH_ALLOWLIST" \
     | while read -r f; do
-        if [ -f "$f" ] && grep -q $'—' "$f" 2>/dev/null; then echo "$f"; fi
+        if [ -f "$f" ] && grep -qE $'—|&mdash;|&#8212;|&#x2014;' "$f" 2>/dev/null; then echo "$f"; fi
       done
 )
 if [ -n "$emdash_hits" ]; then
-  echo "${YELLOW}WARNING:${RESET} em dash (U+2014) found in:"
+  echo "${YELLOW}WARNING:${RESET} em dash (U+2014 or HTML entity) found in:"
   echo "$emdash_hits" | sed 's/^/  /'
   echo "  Use commas, periods, or spaced hyphens. This is a brand voice rule."
   fail=1
