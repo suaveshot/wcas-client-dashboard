@@ -33,6 +33,7 @@ from . import (
     activation_state,
     airtable_schema,
     audit_log,
+    automation_catalog,
     clients_repo,
     credentials,
     crm_detect,
@@ -40,6 +41,7 @@ from . import (
     email_sender,
     handoff,
     heartbeat_store,
+    tenant_automations,
     tenant_kb,
     validation_probe,
     voice_card,
@@ -690,6 +692,11 @@ def _propose_crm_mapping(tenant_id: str, args: dict[str, Any]) -> dict[str, Any]
 def _mark_activation_complete(tenant_id: str, args: dict[str, Any]) -> dict[str, Any]:
     """Mark the tenant as activated. First-run rings stay to be filled as pipelines execute.
 
+    When `tier` is supplied (and the tenant has no tier_default entries
+    yet), seeds the tenant's automations.json from the tier's catalog.
+    Idempotent: re-running with the same tier on a tenant that already
+    has tier_defaults is a no-op aside from the stored tier field.
+
     When owner_name + owner_email are supplied, also emails the one-page
     handoff letter. The letter send is best-effort: a failure here does
     not roll back the activation flag (the state is the source of truth,
@@ -699,6 +706,26 @@ def _mark_activation_complete(tenant_id: str, args: dict[str, Any]) -> dict[str,
     owner_name = (args.get("owner_name") or "").strip()
     owner_email = (args.get("owner_email") or "").strip()
     business_name = (args.get("business_name") or "").strip() or None
+    tier = (args.get("tier") or "").strip().lower() or None
+
+    # Seed tier defaults BEFORE the handoff so the letter can list the
+    # right automations. Failures here are logged but don't block the
+    # activation flag flip - state is the source of truth.
+    seeded_count = 0
+    seed_error: str | None = None
+    if tier:
+        if tier not in automation_catalog.VALID_TIERS:
+            seed_error = f"unknown tier {tier!r}"
+        else:
+            try:
+                enabled = tenant_automations.seed_for_tier(tenant_id, tier)
+                seeded_count = sum(
+                    1 for e in enabled if e.get("source") == "tier_default"
+                )
+            except tenant_automations.TenantAutomationsError as exc:
+                seed_error = str(exc)
+                log.warning("seed_for_tier failed tenant=%s tier=%s: %s",
+                            tenant_id, tier, exc)
 
     state = activation_state.mark_complete(tenant_id, note=note or None)
 
@@ -719,6 +746,9 @@ def _mark_activation_complete(tenant_id: str, args: dict[str, Any]) -> dict[str,
         "status": "activated",
         "activated_at": state.get("activated_at"),
         "role_count": len(state.get("roles", {})),
+        "tier": tier,
+        "tier_default_count": seeded_count,
+        "tier_seed_error": seed_error,
         "handoff_sent": handoff_sent,
         "note": note
         or "Activation wizard complete. Pipelines will fill their first-run rings as they execute.",
@@ -1033,13 +1063,16 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         "mark_activation_complete",
         "Flip the tenant to activated state. Call only when the owner has confirmed "
         "they're done for the session. Non-destructive: further tool calls are allowed. "
-        "When owner_name + owner_email are supplied, also emails the one-page handoff "
-        "letter ('what we just turned on, what happens this week, who to ping'). The "
-        "letter send is best-effort: a failure does not roll back activation.",
+        "When `tier` is supplied, seeds the tenant's automations.json from the tier's "
+        "catalog (idempotent - existing tier_defaults preserved). When owner_name + "
+        "owner_email are supplied, also emails the one-page handoff letter ('what we "
+        "just turned on, what happens this week, who to ping'). Both side effects are "
+        "best-effort: a failure does not roll back activation.",
         {
             "type": "object",
             "properties": {
                 "note": {"type": "string", "description": "Optional one-sentence summary the owner will see."},
+                "tier": {"type": "string", "enum": ["starter", "pro", "ultra"], "description": "Pricing tier the tenant signed for. Triggers tier-default seeding of automations.json."},
                 "owner_name": {"type": "string", "description": "Owner's name as confirmed during activation. Required to send the handoff letter."},
                 "owner_email": {"type": "string", "description": "Owner's email. Required to send the handoff letter."},
                 "business_name": {"type": "string", "description": "Trade name to address the letter to. Defaults to owner_name when absent."},
