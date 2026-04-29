@@ -134,10 +134,13 @@ def test_judge_demo_get_returns_405():
 
 def test_activate_requires_auth():
     # /activate is behind require_tenant as of Day 4. Anonymous hits
-    # land on /auth/login via the 401 redirect handler.
+    # land on /auth/login via the 401 redirect handler. As of W2 the
+    # redirect appends ?next= so the post-login round-trip lands them
+    # back on /activate.
     r = client.get("/activate", follow_redirects=False)
     assert r.status_code == 303
-    assert r.headers["location"] == "/auth/login"
+    assert r.headers["location"].startswith("/auth/login")
+    assert "next=/activate" in r.headers["location"]
 
 
 def test_activate_renders_wizard_for_authed_tenant(tmp_path, monkeypatch):
@@ -313,6 +316,119 @@ def test_auth_verify_bad_token_redirects_to_login():
     r = client.get("/auth/verify?token=definitely-not-real", follow_redirects=False)
     assert r.status_code == 303
     assert "/auth/login" in r.headers.get("location", "")
+
+
+def test_login_renders_error_codes():
+    """W2.1: ?e=expired etc. should surface a friendly message on /auth/login.
+
+    Fragments avoid apostrophes since Jinja autoescape renders them as &#39;
+    in the response body.
+    """
+    for code, fragment in [
+        ("expired", "expired"),
+        ("used", "already been used"),
+        ("invalid", "look right"),
+        ("missing", "Sign-in link missing"),
+        ("server", "wrong on our side"),
+        ("incomplete", "quite set up yet"),
+    ]:
+        r = client.get(f"/auth/login?e={code}")
+        assert r.status_code == 200, f"login GET with e={code} should still render"
+        assert fragment in r.text, f"login page missing copy for e={code}: '{fragment}'"
+
+
+def test_login_ignores_unknown_error_code():
+    """Unknown ?e= value should render a clean form, no leaked error string."""
+    r = client.get("/auth/login?e=NOT-A-REAL-CODE")
+    assert r.status_code == 200
+    assert "NOT-A-REAL-CODE" not in r.text
+
+
+def test_protected_route_redirect_preserves_next(monkeypatch):
+    """W2.2: hitting a session-gated GET unauthed should send ?next=<path>.
+
+    Use /settings as the canary: it has no PREVIEW_MODE bypass branch,
+    so the redirect path is deterministic regardless of env state.
+    """
+    monkeypatch.delenv("PREVIEW_MODE", raising=False)
+    r = client.get("/goals", follow_redirects=False)
+    assert r.status_code == 303
+    location = r.headers.get("location", "")
+    assert location.startswith("/auth/login?next=")
+    assert "/goals" in location
+
+
+def test_login_redirect_rejects_external_next():
+    """_safe_next must reject scheme-relative + external URLs."""
+    from dashboard_app.api.auth import _safe_next
+
+    assert _safe_next("//evil.com/path") is None
+    assert _safe_next("https://evil.com/path") is None
+    assert _safe_next("javascript:alert(1)") is None
+    assert _safe_next("/goals") == "/goals"
+    assert _safe_next("/roles/reviews?demo=1") == "/roles/reviews?demo=1"
+    assert _safe_next("") is None
+    assert _safe_next(None) is None
+
+
+def test_validation_error_renders_html_for_browsers():
+    """W2.3: 422 on non-API route should render placeholder.html, not raw JSON."""
+    # Force a validation error on the magic-link request without an email.
+    r = client.post("/auth/request", data={})
+    assert r.status_code == 422
+    assert "quite line up" in r.text  # avoid apostrophe (Jinja auto-escapes to &#39;)
+    assert "WestCoast Automation Solutions" in r.text  # branded chrome present
+    assert "application/json" not in r.headers.get("content-type", "")
+
+
+def test_validation_error_still_json_for_api():
+    """W2.3 inverse: /api/* validation errors stay JSON for programmatic clients."""
+    from dashboard_app.services import sessions
+
+    cookie = sessions.issue(tenant_id="test_tenant", email="test@example.com", role="client")
+    name = sessions.cookie_kwargs()["key"]
+    # /api/goals POST requires title, metric, target, timeframe; empty body fails validation.
+    r = client.post("/api/goals", json={}, cookies={name: cookie})
+    assert r.status_code == 422
+    assert r.headers["content-type"].startswith("application/json")
+    assert "invalid request" in r.text
+
+
+def test_status_403_renders_branded_page():
+    """W2.4: 403 falls through StarletteHTTPException to the status-code map."""
+    from fastapi import HTTPException
+
+    @app.get("/_test/forbidden")
+    async def _forbidden():
+        raise HTTPException(status_code=403, detail="not allowed")
+
+    try:
+        r = client.get("/_test/forbidden")
+        assert r.status_code == 403
+        assert "Not allowed" in r.text
+        assert "WestCoast Automation Solutions" in r.text  # placeholder.html chrome
+        assert "<h1>403</h1>" not in r.text  # no unbranded fallback
+    finally:
+        # Best-effort cleanup; avoid leaking the test route into other tests.
+        app.router.routes = [r for r in app.router.routes if getattr(r, "path", "") != "/_test/forbidden"]
+
+
+def test_error_html_uses_team_not_first_name():
+    """W2.5: error.html must say 'the team' not just bare 'Sam', so a tenant
+    who has never met Sam doesn't read the error page as cryptic."""
+    import pathlib
+
+    here = pathlib.Path(__file__).resolve().parent.parent
+    text = (here / "dashboard_app/templates/error.html").read_text(encoding="utf-8")
+    # Old copy was 'so Sam can look it up' + 'Fastest fix: email <sam@...>'.
+    # New copy must reference 'the WCAS team' / 'the team' explicitly.
+    assert "the WCAS team" in text or "the team" in text
+    # Don't fully ban the name 'Sam' (the email address still contains it),
+    # but make sure the bare "so Sam can look it up" friend-of-a-friend phrasing is gone.
+    assert "so Sam can" not in text
+
+
+
 
 
 def test_session_middleware_lets_valid_cookie_through():

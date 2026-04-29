@@ -49,7 +49,7 @@ TEMPLATES_DIR = APP_DIR / "templates"
 app = FastAPI(
     title="WCAS Client Dashboard",
     description="Agency-level client activation + live automation telemetry.",
-    version="0.7.2",
+    version="0.7.3",
 )
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -90,31 +90,121 @@ app.include_router(tenant_api.router)
 # --- Exception handlers ------------------------------------------------------
 
 
+_STATUS_COPY: dict[int, dict[str, str]] = {
+    403: {
+        "title": "Not allowed",
+        "heading": "Not allowed",
+        "body": (
+            "You don't have access to that page. If this looks wrong, email "
+            "sam@westcoastautomationsolutions.com."
+        ),
+    },
+    404: {
+        "title": "Not found",
+        "heading": "Nothing here",
+        "body": "That page moved or never existed. Head back home and try again.",
+    },
+    405: {
+        "title": "Method not allowed",
+        "heading": "That request type isn't supported here",
+        "body": "Head back home and try again.",
+    },
+    410: {
+        "title": "Gone",
+        "heading": "That's gone now",
+        "body": "The page or resource you tried has been removed. Head back home.",
+    },
+    429: {
+        "title": "Slow down",
+        "heading": "Slow down a moment",
+        "body": (
+            "Too many requests in a short window. Wait fifteen seconds, then "
+            "try again."
+        ),
+    },
+}
+
+
+def _login_redirect(request: Request) -> RedirectResponse:
+    """Redirect to /auth/login, preserving the originally-requested path.
+
+    Owners deep-linked to /goals/abc lose context if we drop the path on
+    the floor. Append ?next=<current path+query> when it's an internal
+    GET; auth.py::_safe_next validates on the read side. Only attaches
+    next= for GET requests on non-auth paths to avoid loops.
+    """
+    from urllib.parse import quote
+    path = request.url.path
+    if request.method == "GET" and not path.startswith("/auth/"):
+        next_param = path
+        if request.url.query:
+            next_param = f"{path}?{request.url.query}"
+        url = f"/auth/login?next={quote(next_param, safe='/')}"
+    else:
+        url = "/auth/login"
+    return RedirectResponse(url=url, status_code=303)
+
+
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     # JSON clients (/api/*) get a JSON body; humans get the branded page.
     if request.url.path.startswith("/api/"):
         return JSONResponse({"error": exc.detail}, status_code=exc.status_code)
     if exc.status_code == 401:
-        return RedirectResponse(url="/auth/login", status_code=303)
-    if exc.status_code == 404:
+        return _login_redirect(request)
+    status_copy = _STATUS_COPY.get(exc.status_code)
+    if status_copy is not None:
         return templates.TemplateResponse(
             request,
             "placeholder.html",
             {
-                "title": "Not found",
-                "heading": "Nothing here",
-                "body": "That page moved or never existed. Head back home and try again.",
+                "title": status_copy["title"],
+                "heading": status_copy["heading"],
+                "body": status_copy["body"],
             },
-            status_code=404,
+            status_code=exc.status_code,
         )
-    # For other HTTP errors surface a minimal plain page.
-    return HTMLResponse(f"<h1>{exc.status_code}</h1><p>{exc.detail}</p>", status_code=exc.status_code)
+    # Truly unmapped status codes still get the chrome, with the code in the title
+    # so we never ship the unbranded <h1>{code}</h1> fallback to a real owner.
+    # The exception detail is preserved in the body when present so OAuth callbacks
+    # and similar surfaces can still surface "missing code or state" / "tenant
+    # mismatch" / etc. context to the user.
+    detail = (exc.detail or "").strip() if isinstance(exc.detail, str) else ""
+    body_text = (
+        detail if detail else
+        "We hit an unexpected response on that request. Head back home, "
+        "and email the team if it keeps happening."
+    )
+    return templates.TemplateResponse(
+        request,
+        "placeholder.html",
+        {
+            "title": f"Error {exc.status_code}",
+            "heading": "Something went sideways",
+            "body": body_text,
+        },
+        status_code=exc.status_code,
+    )
 
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    return JSONResponse({"error": "invalid request", "detail": exc.errors()}, status_code=422)
+    if request.url.path.startswith("/api/"):
+        return JSONResponse({"error": "invalid request", "detail": exc.errors()}, status_code=422)
+    # Browser form posts get a branded page instead of raw JSON.
+    return templates.TemplateResponse(
+        request,
+        "placeholder.html",
+        {
+            "title": "That didn't go through",
+            "heading": "Something didn't quite line up",
+            "body": (
+                "We couldn't process that submission. Head back and double-check "
+                "the fields, then try again."
+            ),
+        },
+        status_code=422,
+    )
 
 
 @app.exception_handler(Exception)
@@ -413,7 +503,7 @@ async def activate_terms_page(request: Request, tenant_id: str = Depends(require
 def _sidebar_stub(request: Request, title: str, body: str) -> HTMLResponse:
     sess = current_session(request)
     if sess is None and os.getenv("PREVIEW_MODE", "false").lower() != "true":
-        return RedirectResponse(url="/auth/login", status_code=303)
+        return _login_redirect(request)
     return templates.TemplateResponse(
         request,
         "placeholder.html",
@@ -426,7 +516,7 @@ async def roles_page(request: Request):
     sess = current_session(request)
     preview = os.getenv("PREVIEW_MODE", "false").lower() == "true"
     if sess is None and not preview:
-        return RedirectResponse(url="/auth/login", status_code=303)
+        return _login_redirect(request)
     tenant_id = sess["tid"] if sess else "americal_patrol"
 
     from .services import heartbeat_store as _hb
@@ -473,7 +563,7 @@ async def role_detail_page(request: Request, role_slug: str):
     preview = os.getenv("PREVIEW_MODE", "false").lower() == "true"
 
     if sess is None and not preview:
-        return RedirectResponse(url="/auth/login", status_code=303)
+        return _login_redirect(request)
 
     tenant_id = sess["tid"] if sess else "americal_patrol"
     ctx = role_detail.build(tenant_id=tenant_id, role_slug=role_slug)
@@ -486,7 +576,7 @@ async def activity_page(request: Request):
     sess = current_session(request)
     preview = os.getenv("PREVIEW_MODE", "false").lower() == "true"
     if sess is None and not preview:
-        return RedirectResponse(url="/auth/login", status_code=303)
+        return _login_redirect(request)
     tenant_id = sess["tid"] if sess else "americal_patrol"
     feed = activity_feed.build(tenant_id, max_rows=80)
     return templates.TemplateResponse(
@@ -505,7 +595,7 @@ async def recommendations_page(request: Request):
     sess = current_session(request)
     preview = os.getenv("PREVIEW_MODE", "false").lower() == "true"
     if sess is None and not preview:
-        return RedirectResponse(url="/auth/login", status_code=303)
+        return _login_redirect(request)
     tenant_id = sess["tid"] if sess else "americal_patrol"
     is_admin = bool(sess and sess.get("rl") == "admin")
 
@@ -549,7 +639,7 @@ async def settings_page(request: Request):
     sess = current_session(request)
     preview = os.getenv("PREVIEW_MODE", "false").lower() == "true"
     if sess is None and not preview:
-        return RedirectResponse(url="/auth/login", status_code=303)
+        return _login_redirect(request)
     tenant_id = sess["tid"] if sess else "americal_patrol"
 
     prefs = tenant_prefs.read(tenant_id)
@@ -585,7 +675,7 @@ async def goals_page(request: Request):
     sess = current_session(request)
     preview = os.getenv("PREVIEW_MODE", "false").lower() == "true"
     if sess is None and not preview:
-        return RedirectResponse(url="/auth/login", status_code=303)
+        return _login_redirect(request)
     tenant_id = sess["tid"] if sess else "americal_patrol"
 
     data = goals_svc.read(tenant_id)
@@ -618,7 +708,7 @@ async def approvals_page(request: Request):
     sess = current_session(request)
     preview = os.getenv("PREVIEW_MODE", "false").lower() == "true"
     if sess is None and not preview:
-        return RedirectResponse(url="/auth/login", status_code=303)
+        return _login_redirect(request)
 
     tenant_id = sess["tid"] if sess else "americal_patrol"
     drafts = outgoing_queue.list_pending(tenant_id)
@@ -800,7 +890,7 @@ async def dashboard(request: Request) -> HTMLResponse:
     preview = os.getenv("PREVIEW_MODE", "false").lower() == "true"
 
     if sess is None and not preview:
-        return RedirectResponse(url="/auth/login", status_code=303)
+        return _login_redirect(request)
 
     if sess is None and preview:
         # Demo path: use the hand-crafted AP mock for video recording.

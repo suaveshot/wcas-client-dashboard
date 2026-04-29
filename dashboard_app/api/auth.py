@@ -48,20 +48,23 @@ def _tmpl() -> Jinja2Templates:
     return _TEMPLATES
 
 
-def _magic_link_url(request: Request, token: str) -> str:
+def _magic_link_url(request: Request, token: str, next_path: str | None = None) -> str:
     # Prefer the public host from env so we don't accidentally email
     # out a localhost link when running behind a reverse proxy.
     base = (request.headers.get("x-forwarded-host")
             or request.headers.get("host")
             or "dashboard.westcoastautomationsolutions.com")
     scheme = "https" if "localhost" not in base else request.url.scheme
-    return f"{scheme}://{base}/auth/verify?{urlencode({'token': token})}"
+    params = {"token": token}
+    if next_path:
+        params["next"] = next_path
+    return f"{scheme}://{base}/auth/verify?{urlencode(params)}"
 
 
 def _render_magic_link_email(
-    request: Request, token: str, tenant_display: str
+    request: Request, token: str, tenant_display: str, next_path: str | None = None,
 ) -> tuple[str, str]:
-    url = _magic_link_url(request, token)
+    url = _magic_link_url(request, token, next_path)
     html = _tmpl().get_template("emails/magic_link.html").render(
         link_url=url,
         tenant_display=tenant_display or "your dashboard",
@@ -75,17 +78,65 @@ def _render_magic_link_email(
     return html, text
 
 
+_LOGIN_ERROR_MESSAGES = {
+    "expired": "That link has expired. Email yourself a fresh one below.",
+    "used": "That link has already been used. Email yourself a fresh one.",
+    "invalid": "That link doesn't look right. Try emailing yourself a new one.",
+    "missing": "Sign-in link missing. Enter your email below to get a new one.",
+    "server": "Something went wrong on our side. Try again in a minute.",
+    "incomplete": (
+        "Your account isn't quite set up yet. Email "
+        "sam@westcoastautomationsolutions.com for help."
+    ),
+}
+
+
 @router.get("/login", response_class=HTMLResponse)
 async def login_form(request: Request) -> HTMLResponse:
-    return _tmpl().TemplateResponse(request, "auth/login.html", {"error": None})
+    error_code = request.query_params.get("e")
+    error_message = _LOGIN_ERROR_MESSAGES.get(error_code) if error_code else None
+    next_path = _safe_next(request.query_params.get("next"))
+    return _tmpl().TemplateResponse(
+        request,
+        "auth/login.html",
+        {"error": error_message, "next_path": next_path},
+    )
+
+
+def _safe_next(raw: str | None) -> str | None:
+    """Allowlist next= to internal paths only.
+
+    Rejects absolute URLs, scheme-relative URLs, and any path that
+    doesn't start with a single forward slash followed by an alnum
+    char. Returns None when the input is unsafe so callers default
+    to the post-login landing logic.
+    """
+    if not raw or not isinstance(raw, str):
+        return None
+    if len(raw) > 512:
+        return None
+    if not raw.startswith("/"):
+        return None
+    if raw.startswith("//"):
+        return None  # scheme-relative URL like //evil.com/path
+    if "\\" in raw or "\n" in raw or "\r" in raw:
+        return None
+    return raw
 
 
 @router.post("/request", response_class=HTMLResponse)
-async def request_magic_link(request: Request, email: str = Form(...)) -> HTMLResponse:
+async def request_magic_link(
+    request: Request,
+    email: str = Form(...),
+    next: str | None = Form(None),
+) -> HTMLResponse:
     email_clean = email.strip().lower()
+    next_path = _safe_next(next)
     if "@" not in email_clean or len(email_clean) > 254:
         return _tmpl().TemplateResponse(
-            request, "auth/login.html", {"error": "That doesn't look like a valid email."}
+            request,
+            "auth/login.html",
+            {"error": "That doesn't look like a valid email.", "next_path": next_path},
         )
 
     if not rate_limit.login_limiter.allow(email_clean):
@@ -129,7 +180,7 @@ async def request_magic_link(request: Request, email: str = Form(...)) -> HTMLRe
                     record["id"], tokens.hash_token(token), tokens.expiry_timestamp()
                 )
                 html_body, text_body = _render_magic_link_email(
-                    request, token, clients_repo.extract_tenant_id(record)
+                    request, token, clients_repo.extract_tenant_id(record), next_path
                 )
                 email_sender.send_html(
                     to_email=email_clean,
@@ -146,9 +197,12 @@ async def request_magic_link(request: Request, email: str = Form(...)) -> HTMLRe
 
 
 @router.get("/verify")
-async def verify_magic_link(request: Request, token: str = "") -> RedirectResponse:
+async def verify_magic_link(
+    request: Request, token: str = "", next: str = "",
+) -> RedirectResponse:
     if not token:
         return RedirectResponse(url="/auth/login?e=missing", status_code=303)
+    next_path = _safe_next(next) if next else None
 
     candidate_hash = tokens.hash_token(token)
 
@@ -202,12 +256,16 @@ async def verify_magic_link(request: Request, token: str = "") -> RedirectRespon
     # First-time owners land on /activate to run the onboarding chat; returning
     # owners (activation already marked complete) go straight to /dashboard.
     # Admins skip the activation gate (the /admin view itself was punted
-    # post-hackathon) and land on /dashboard.
+    # post-hackathon) and land on /dashboard. If a deep-link ?next= survived
+    # the magic-link round-trip and passed _safe_next, prefer it over the
+    # default landing so owners return where they were trying to go.
     if role == "admin":
         landing = "/dashboard"
     else:
         from ..services import activation_state
         landing = "/dashboard" if activation_state.is_complete(tenant_id) else "/activate"
+    if next_path:
+        landing = next_path
     response = RedirectResponse(url=landing, status_code=303)
     response.set_cookie(value=cookie_value, **sessions.cookie_kwargs())
     return response

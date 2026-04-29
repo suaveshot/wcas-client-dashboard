@@ -30,6 +30,9 @@
         <input id="email" type="email" name="email" required autocomplete="email" autofocus
                inputmode="email" placeholder="you@yourcompany.com"
                style="padding:12px 16px; border:1px solid var(--border-strong); border-radius:var(--r-sm); font-family:var(--font-body); font-size:16px; min-width:260px;">
+        {% if next_path %}
+        <input type="hidden" name="next" value="{{ next_path }}">
+        {% endif %}
         <button type="submit"
                 style="padding:12px 22px; background: var(--accent); color:#fff; border:0; border-radius:var(--r-sm); font-family:var(--font-body); font-weight:600; font-size:16px; cursor:pointer;">
             Email me a link
