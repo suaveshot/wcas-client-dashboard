@@ -41,6 +41,7 @@ from . import (
     email_sender,
     handoff,
     heartbeat_store,
+    paste_specs,
     tenant_automations,
     tenant_kb,
     tenant_schedule,
@@ -477,9 +478,10 @@ def _record_provisioning_plan(tenant_id: str, args: dict[str, Any]) -> dict[str,
 
 
 def _request_credential(tenant_id: str, args: dict[str, Any]) -> dict[str, Any]:
-    """Return an OAuth start URL (or a method-specific affordance) for the client UI."""
+    """Return an OAuth start URL or a paste-form spec the client UI renders."""
     service = (args.get("service") or "").strip().lower()
     method = (args.get("method") or "oauth").strip().lower()
+
     if service == "google" and method == "oauth":
         return {
             "status": "render_button",
@@ -489,14 +491,35 @@ def _request_credential(tenant_id: str, args: dict[str, Any]) -> dict[str, Any]:
             "button_label": "Connect your Google account",
             "button_hint": "Connects 3 roles in one click: Google Business, SEO, and Reviews.",
         }
-    # Non-Google providers are post-hackathon. Honest surface for now.
+
+    if method == "api_key_paste":
+        spec = paste_specs.get_form_spec(service)
+        if spec is None:
+            return {
+                "status": "not_yet_implemented",
+                "method": method,
+                "service": service,
+                "hint": (
+                    f"No paste spec for service {service!r} yet. Supported "
+                    f"services: {', '.join(paste_specs.supported_services())}."
+                ),
+            }
+        return {
+            "status": "render_paste_form",
+            "method": "api_key_paste",
+            "service": service,
+            "paste_endpoint": f"/api/credentials/{service}/paste",
+            "form": spec,
+        }
+
+    # Non-Google OAuth + screenshot flows are still TBD.
     return {
         "status": "not_yet_implemented",
         "method": method,
         "service": service,
         "hint": (
-            "Only google+oauth is wired today. Other providers (meta, ghl, qbo) "
-            "and the api-key-paste flow ship post-hackathon."
+            "Only google+oauth and api_key_paste are wired today. Other OAuth "
+            "providers (meta, ghl, qbo) and the screenshot-guided flow ship later."
         ),
     }
 
