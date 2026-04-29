@@ -1059,7 +1059,7 @@ Files created:
 - `static/demo/activation.js` (~1218 lines, scene choreography + faux cursor + autoplay + WebAudio sound + tweaks panel)
 - `static/demo/dashboard.js` (~861 lines, sister choreography for the 6-scene daily story)
 
-Em-dash scrub: 77 occurrences across the bundle (29 in activation.js, 25 in dashboard.js, 18 in dashboard.html, 7 in activation.html, 1 in ring-data.js comment scrubbed to plain hyphen, JSON speaker-notes used `—` escapes to stay parseable). One-shot `dashboard_app/scripts/scrub_demo_em_dashes.py` did the heavy lift then was deleted before commit per plan.
+Em-dash scrub: 77 occurrences across the bundle (29 in activation.js, 25 in dashboard.js, 18 in dashboard.html, 7 in activation.html, 1 in ring-data.js comment scrubbed to plain hyphen, JSON speaker-notes used `\u2014` escapes to stay parseable). One-shot `dashboard_app/scripts/scrub_demo_em_dashes.py` did the heavy lift then was deleted before commit per plan.
 
 Routes added in `main.py` after the `/activate` block. No auth gate, no tenant - pure scripted prototype designed for the recording.
 
@@ -1127,7 +1127,7 @@ Three changes, no backend touched:
 ## Surprising bits this session
 
 - The handoff bundle's `tokens.css` redefines `--bg`, `--ink`, `--accent` at `:root`. If served unscoped it would have nuked the live app's color palette. Wrapping every declaration under `body.wcas-demo` made the demo CSS a complete no-op outside the `/demo/*` pages. The inline `<style>` blocks in the demo HTMLs use unprefixed selectors (`.activate`, `.dash`, `.scene-btn`) which are safe because they only load on those two pages.
-- The em-dash scrubber needed three different strategies: JS string concatenation via `String.fromCharCode(0x2014)` for `.js` files, HTML entity `&#8212;` for HTML body text, and JSON `—` escapes inside the inline speaker-notes block (so the JSON stays valid for any future page-script that parses it). Got 77 dashes in one pass.
+- The em-dash scrubber needed three different strategies: JS string concatenation via `String.fromCharCode(0x2014)` for `.js` files, HTML entity `&#8212;` for HTML body text, and JSON `\u2014` escapes inside the inline speaker-notes block (so the JSON stays valid for any future page-script that parses it). Got 77 dashes in one pass.
 - The `wcas_activation_celebrated` sessionStorage gate means refreshing the page after activation completes will NOT replay the celebration. That's intentional - it's a one-time delight on the real transition, not a "always show on page load" thing. For the recording Sam can clear the key in devtools if he wants to re-shoot the moment.
 - The cinematic dashboard pulls Source Serif 4 + Inter + JetBrains Mono in addition to Plus Jakarta Sans (per its own `<link>` tag). Different typography from the rest of the dashboard product surface - intentional design choice by Claude Design for the cinematic's editorial feel.
 - The bezel arc circumference is `2π·40 = 251.33`. Memorizing that constant felt silly; computing it inline in the Jinja template via `((251.33 * (4 - completed)) / 4)|round(2)` made the arc fill correctly even before JS hydration.

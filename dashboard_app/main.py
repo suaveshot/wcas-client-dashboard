@@ -49,7 +49,7 @@ TEMPLATES_DIR = APP_DIR / "templates"
 app = FastAPI(
     title="WCAS Client Dashboard",
     description="Agency-level client activation + live automation telemetry.",
-    version="0.7.0",
+    version="0.7.1",
 )
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -196,7 +196,13 @@ async def judge_demo_login() -> RedirectResponse:
     activated, ~35 receipts, 5 pending drafts, 3 recommendations, 1 goal.
     Judges can browse every surface (Cmd-K Ask, /approvals, role drill-down,
     receipts drawer) without doing any onboarding.
+
+    Gated by JUDGE_DEMO=true. Default off post-judging so a public POST
+    can no longer mint a real session into the riverbend_barbershop tenant.
     """
+    if os.getenv("JUDGE_DEMO", "false").lower() != "true":
+        raise HTTPException(status_code=404, detail="not found")
+
     from .services import (
         activation_state as _astate,
         audit_log as _audit,
@@ -314,9 +320,22 @@ async def activation_state_api(tenant_id: str = Depends(require_tenant)) -> JSON
     })
 
 
+def _demo_gate_open() -> bool:
+    """Both /demo cinematics are gated post-judging.
+
+    Set JUDGE_DEMO=true on the VPS .env when recording marketing footage,
+    handing the link to a portfolio reviewer, etc. Default off so a real
+    owner who lands on /demo/dashboard via search engine cannot see the
+    synthetic Riverbend Barbershop data.
+    """
+    return os.getenv("JUDGE_DEMO", "false").lower() == "true"
+
+
 @app.get("/demo")
 async def demo_root() -> RedirectResponse:
     """Ergonomic shortcut: /demo always lands on the activation cinematic."""
+    if not _demo_gate_open():
+        raise HTTPException(status_code=404, detail="not found")
     return RedirectResponse(url="/demo/activation", status_code=303)
 
 
@@ -327,6 +346,8 @@ async def demo_activation(request: Request) -> HTMLResponse:
     Standalone prototype, no auth, no tenant. Used for the hackathon
     submission video. Backend untouched; the page is pure CSS+JS.
     """
+    if not _demo_gate_open():
+        raise HTTPException(status_code=404, detail="not found")
     return templates.TemplateResponse(request, "demo_activation.html", {})
 
 
@@ -337,6 +358,8 @@ async def demo_dashboard(request: Request) -> HTMLResponse:
     Standalone prototype, no auth, no tenant. Speaker notes embedded
     inline in the page. Sister cinematic to /demo/activation.
     """
+    if not _demo_gate_open():
+        raise HTTPException(status_code=404, detail="not found")
     return templates.TemplateResponse(request, "demo_dashboard.html", {})
 
 

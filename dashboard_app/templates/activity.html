@@ -47,6 +47,7 @@
                 <h1 class="ap-approvals__title">Activity</h1>
                 <p class="ap-approvals__lead">Every automated action and every owner decision, newest first. This is the transparency feed at full length.</p>
 
+                {% if feed %}
                 <div class="ap-feed" role="log" aria-live="polite">
                     {% for row in feed %}
                     <article class="ap-feed__row">
@@ -67,6 +68,14 @@
                     </article>
                     {% endfor %}
                 </div>
+                {% else %}
+                <div class="ap-approvals__empty">
+                    <p class="ap-approvals__empty-title">No activity yet.</p>
+                    <p class="ap-approvals__empty-body">
+                        Once your roles run, every action and every decision will land here, newest first. Check back after the first heartbeat.
+                    </p>
+                </div>
+                {% endif %}
             </section>
         </main>
     </div>

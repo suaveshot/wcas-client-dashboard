@@ -53,6 +53,7 @@ def test_judge_demo_redirects_when_tenant_unseeded(tmp_path, monkeypatch):
     """With an empty TENANT_ROOT the judge tenant has no activation file,
     so the route falls back to /activate. Confirms the route mints a session
     and that the redirect logic mirrors the magic-link verify flow."""
+    monkeypatch.setenv("JUDGE_DEMO", "true")
     monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
     fresh = TestClient(app)
     r = fresh.post("/auth/judge", follow_redirects=False)
@@ -67,6 +68,7 @@ def test_judge_demo_redirects_to_dashboard_when_seeded(tmp_path, monkeypatch):
     has run."""
     from dashboard_app.services import activation_state
 
+    monkeypatch.setenv("JUDGE_DEMO", "true")
     monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
     activation_state.mark_complete("riverbend_barbershop", note="test seed")
 
@@ -79,6 +81,7 @@ def test_judge_demo_redirects_to_dashboard_when_seeded(tmp_path, monkeypatch):
 def test_judge_demo_session_is_riverbend_barbershop(tmp_path, monkeypatch):
     from dashboard_app.services import sessions
 
+    monkeypatch.setenv("JUDGE_DEMO", "true")
     monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
     fresh = TestClient(app)
     r = fresh.post("/auth/judge", follow_redirects=False)
@@ -89,6 +92,39 @@ def test_judge_demo_session_is_riverbend_barbershop(tmp_path, monkeypatch):
     assert payload is not None
     assert payload["tid"] == "riverbend_barbershop"
     assert payload["rl"] == "client"
+
+
+def test_judge_demo_404_when_gate_closed(tmp_path, monkeypatch):
+    """Default JUDGE_DEMO=false means the route is hidden from the public
+    after judging closes. Prevents a stray POST from minting a real
+    riverbend_barbershop session."""
+    monkeypatch.delenv("JUDGE_DEMO", raising=False)
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    fresh = TestClient(app)
+    r = fresh.post("/auth/judge", follow_redirects=False)
+    assert r.status_code == 404
+
+
+def test_demo_routes_404_when_gate_closed(monkeypatch):
+    """/demo, /demo/activation, /demo/dashboard all 404 unless JUDGE_DEMO=true.
+    Prevents search-engine-landing owners from seeing synthetic demo data."""
+    monkeypatch.delenv("JUDGE_DEMO", raising=False)
+    fresh = TestClient(app)
+    for path in ("/demo", "/demo/activation", "/demo/dashboard"):
+        r = fresh.get(path, follow_redirects=False)
+        assert r.status_code == 404, f"{path} should 404 with gate closed"
+
+
+def test_demo_routes_open_when_gate_set(monkeypatch):
+    monkeypatch.setenv("JUDGE_DEMO", "true")
+    fresh = TestClient(app)
+    r = fresh.get("/demo", follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"] == "/demo/activation"
+    r = fresh.get("/demo/activation")
+    assert r.status_code == 200
+    r = fresh.get("/demo/dashboard")
+    assert r.status_code == 200
 
 
 def test_judge_demo_get_returns_405():

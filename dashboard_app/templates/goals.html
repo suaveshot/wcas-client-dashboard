@@ -56,9 +56,15 @@
                         </div>
                         <div class="ap-goal-card__title">{{ g.title }}</div>
                         <div class="ap-goal-card__numbers">
+                            {% if g.current and g.current > 0 %}
                             <span class="ap-priv">{{ g.current|int }}</span> of
                             <span class="ap-priv">{{ g.target|int }}</span>
                             <span class="ap-goal-card__timeframe">({{ g.timeframe }})</span>
+                            {% else %}
+                            <span class="ap-goal-card__tracking">Tracking</span> &middot;
+                            target <span class="ap-priv">{{ g.target|int }}</span>
+                            <span class="ap-goal-card__timeframe">({{ g.timeframe }})</span>
+                            {% endif %}
                         </div>
                         <div class="ap-goal-card__bar" aria-hidden="true">
                             <span style="width: {{ g.percent }}%"></span>
