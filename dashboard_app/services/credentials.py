@@ -41,6 +41,19 @@ from . import heartbeat_store
 
 _SAFE_PROVIDER = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 
+# Pattern B providers - paste-credentials (API keys, App Passwords) that
+# the client owns and whose vendor doesn't offer OAuth. Whitelisted so a
+# buggy caller can't accidentally store a free-form record under any slug.
+PASTE_PROVIDERS: frozenset[str] = frozenset({
+    "gmail_app_password",
+    "wordpress",
+    "connecteam",
+    "vapi",
+    "twilio_paste",
+    "brightlocal",
+    "airtable",
+})
+
 # Google access tokens live 3600s. Cache for 50 min so the next refresh
 # happens before the token expires, not at the cliff.
 _ACCESS_TOKEN_TTL_SECONDS = 3000
@@ -100,6 +113,59 @@ def store(
         # where this succeeds; dev on Windows is fine with default ACLs.
         pass
     _access_token_cache.pop((tenant_id, provider), None)
+    return path
+
+
+def store_paste(
+    tenant_id: str,
+    provider: str,
+    fields: dict[str, Any],
+    *,
+    validation_status: str = "pending",
+) -> Path:
+    """Atomically persist a Pattern B paste credential (API key / App Password).
+
+    Unlike `store()` which is OAuth-shaped, this accepts a generic field
+    dict (e.g. {"email_address": "...", "app_password": "..."}). Provider
+    must be on PASTE_PROVIDERS so we never accept arbitrary shapes by
+    accident. Atomic write + chmod 600 mirrors the OAuth path.
+    """
+    _validate_provider(provider)
+    if provider not in PASTE_PROVIDERS:
+        raise CredentialError(
+            f"provider {provider!r} not on PASTE_PROVIDERS; "
+            f"add it explicitly to allow paste-credential storage"
+        )
+    if not isinstance(fields, dict) or not fields:
+        raise CredentialError("fields must be a non-empty dict")
+
+    root = _credentials_root(tenant_id)
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / f"{provider}.json"
+    now = datetime.now(timezone.utc)
+    payload: dict[str, Any] = {
+        "provider": provider,
+        "auth_kind": "paste",
+        "connected_at": now.isoformat(),
+        "last_validated_at": None,
+        "validation_status": validation_status,
+    }
+    # Caller fields go LAST so the caller can't override the bookkeeping
+    # fields (provider/auth_kind/connected_at) - any conflict is overwritten
+    # back. Note: scopes are intentionally NOT inherited here; paste creds
+    # don't have OAuth scopes.
+    for k, v in fields.items():
+        if k in {"provider", "auth_kind", "connected_at"}:
+            continue
+        payload[k] = v
+
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    os.replace(tmp, path)
+    try:
+        os.chmod(path, 0o600)
+    except (PermissionError, NotImplementedError, OSError):
+        pass
     return path
 
 

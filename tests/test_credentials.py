@@ -223,3 +223,85 @@ def test_google_access_token_scrubbed(_tenant_root):
     cleaned = scrubber.scrub(fake_log_line)
     assert "ya29." not in cleaned
     assert "[secret]" in cleaned
+
+
+# ---------------------------------------------------------------------------
+# Pattern B paste credentials (store_paste)
+# ---------------------------------------------------------------------------
+
+
+def test_store_paste_persists_arbitrary_fields(_tenant_root):
+    path = credentials.store_paste(
+        "acme",
+        "gmail_app_password",
+        {
+            "email_address": "owner@example.com",
+            "app_password": "abcd efgh ijkl mnop",
+            "imap_host": "imap.gmail.com",
+        },
+    )
+    assert path.exists()
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["provider"] == "gmail_app_password"
+    assert data["auth_kind"] == "paste"
+    assert data["email_address"] == "owner@example.com"
+    assert data["app_password"] == "abcd efgh ijkl mnop"
+    assert data["imap_host"] == "imap.gmail.com"
+    # OAuth fields are absent
+    assert "refresh_token" not in data
+    assert "scopes" not in data
+
+
+def test_store_paste_rejects_unknown_provider(_tenant_root):
+    with pytest.raises(credentials.CredentialError):
+        credentials.store_paste("acme", "made_up_provider", {"key": "x"})
+
+
+def test_store_paste_rejects_empty_fields(_tenant_root):
+    with pytest.raises(credentials.CredentialError):
+        credentials.store_paste("acme", "gmail_app_password", {})
+
+
+def test_store_paste_rejects_invalid_slug(_tenant_root):
+    with pytest.raises(credentials.CredentialError):
+        credentials.store_paste("acme", "BAD-Slug", {"key": "x"})
+
+
+def test_store_paste_overwrites_previous(_tenant_root):
+    credentials.store_paste("acme", "gmail_app_password", {"app_password": "v1"})
+    credentials.store_paste("acme", "gmail_app_password", {"app_password": "v2"})
+    data = credentials.load("acme", "gmail_app_password")
+    assert data is not None
+    assert data["app_password"] == "v2"
+
+
+def test_store_paste_caller_cant_override_bookkeeping_fields(_tenant_root):
+    """A bad caller passing {"provider": "evil"} mustn't stomp on the
+    canonical bookkeeping fields written by the function."""
+    credentials.store_paste(
+        "acme",
+        "gmail_app_password",
+        {
+            "provider": "evil",
+            "auth_kind": "evil",
+            "connected_at": "1900-01-01",
+            "app_password": "real-value",
+        },
+    )
+    data = credentials.load("acme", "gmail_app_password")
+    assert data["provider"] == "gmail_app_password"
+    assert data["auth_kind"] == "paste"
+    assert data["connected_at"] != "1900-01-01"
+    assert data["app_password"] == "real-value"
+
+
+def test_paste_provider_load_returns_full_record(_tenant_root):
+    credentials.store_paste(
+        "acme",
+        "gmail_app_password",
+        {"email_address": "x@y.com", "app_password": "pw"},
+    )
+    data = credentials.load("acme", "gmail_app_password")
+    assert data is not None
+    assert data["email_address"] == "x@y.com"
+    assert data["app_password"] == "pw"
