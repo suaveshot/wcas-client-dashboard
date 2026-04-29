@@ -93,3 +93,129 @@ def test_recommendations_finalize_marks_draft_when_low_confidence():
     final = recommendations.finalize("acme", rec)
     assert final.get("draft") is True
     assert final.get("draft_reason")
+
+
+# ---------------------------------------------------------------------------
+# W3: API apply endpoint dispatches via services.dispatch
+# (closes audits/phase0_recommendations.md::F1)
+# ---------------------------------------------------------------------------
+
+
+def _api_seed_rec(tenant_id, rec):
+    from dashboard_app.services import recs_store
+    recs_store.write_today(tenant_id, recs=[rec], model="claude-test", usd=0.0)
+
+
+def _api_signed_cookie(tenant_id="acme"):
+    from dashboard_app.services import sessions
+    return sessions.issue(tenant_id=tenant_id, email="owner@acme.com", role="client")
+
+
+def test_api_apply_dispatches_review_reply_draft(tmp_path, monkeypatch):
+    """Applying a review_reply_draft rec creates an outgoing draft via the
+    reference rec handler. Dispatch outcome surfaces in the response."""
+    from fastapi.testclient import TestClient
+    from dashboard_app.main import app
+    from dashboard_app.services import outgoing_queue
+
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    _api_seed_rec("acme", {
+        "id": "rec-r1",
+        "proposed_tool": "review_reply_draft",
+        "title": "Reply to Maria",
+        "review": {"reviewer": "Maria Sanchez", "stars": 5},
+        "draft_body": "Thank you Maria!",
+    })
+
+    client = TestClient(app)
+    cookie = _api_signed_cookie("acme")
+    resp = client.post(
+        "/api/recommendations/rec-r1/act",
+        json={"action": "apply"},
+        cookies={"wcas_session": cookie},
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["action"] == "apply"
+    assert payload["dispatch"]["ok"] is True
+    assert payload["dispatch"]["outcome"]["draft_id"]
+    pending = outgoing_queue.list_pending("acme")
+    assert len(pending) == 1
+    assert pending[0]["pipeline_id"] == "reviews"
+
+
+def test_api_apply_returns_queued_for_review_for_unknown_proposed_tool(tmp_path, monkeypatch):
+    """Recs with proposed_tool not in REC_HANDLERS get queued_for_review per
+    the audit's honest-stub recommendation."""
+    from fastapi.testclient import TestClient
+    from dashboard_app.main import app
+
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    _api_seed_rec("acme", {
+        "id": "rec-x",
+        "proposed_tool": "schedule_change",  # not yet implemented
+        "title": "Move blog day to Wednesday",
+    })
+
+    client = TestClient(app)
+    cookie = _api_signed_cookie("acme")
+    resp = client.post(
+        "/api/recommendations/rec-x/act",
+        json={"action": "apply"},
+        cookies={"wcas_session": cookie},
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["dispatch"]["ok"] is True
+    assert payload["dispatch"]["outcome"]["queued_for_review"] is True
+
+
+def test_api_dismiss_skips_dispatch(tmp_path, monkeypatch):
+    """Dismiss action records intent only - no dispatch outcome in response."""
+    from fastapi.testclient import TestClient
+    from dashboard_app.main import app
+
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    _api_seed_rec("acme", {
+        "id": "rec-d",
+        "proposed_tool": "review_reply_draft",
+        "title": "x",
+    })
+
+    client = TestClient(app)
+    cookie = _api_signed_cookie("acme")
+    resp = client.post(
+        "/api/recommendations/rec-d/act",
+        json={"action": "dismiss"},
+        cookies={"wcas_session": cookie},
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["action"] == "dismiss"
+    assert "dispatch" not in payload  # only Apply triggers dispatch
+
+
+def test_api_apply_skips_when_paused(tmp_path, monkeypatch):
+    import json as _json
+    from fastapi.testclient import TestClient
+    from dashboard_app.main import app
+    from dashboard_app.services import heartbeat_store
+
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    config_path = heartbeat_store.tenant_root("acme") / "tenant_config.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(_json.dumps({"status": "paused"}), encoding="utf-8")
+
+    _api_seed_rec("acme", {"id": "rec-p", "proposed_tool": "review_reply_draft", "title": "x"})
+
+    client = TestClient(app)
+    cookie = _api_signed_cookie("acme")
+    resp = client.post(
+        "/api/recommendations/rec-p/act",
+        json={"action": "apply"},
+        cookies={"wcas_session": cookie},
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["dispatch"]["ok"] is False
+    assert payload["dispatch"]["reason"] == "tenant_paused"

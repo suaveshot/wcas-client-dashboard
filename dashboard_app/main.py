@@ -49,7 +49,7 @@ TEMPLATES_DIR = APP_DIR / "templates"
 app = FastAPI(
     title="WCAS Client Dashboard",
     description="Agency-level client activation + live automation telemetry.",
-    version="0.7.4",
+    version="0.7.5",
 )
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -640,6 +640,8 @@ async def recommendations_page(request: Request):
 @app.get("/settings", response_class=HTMLResponse)
 async def settings_page(request: Request):
     import json as _json
+    from .services import heartbeat_store as _hb
+
     sess = current_session(request)
     preview = os.getenv("PREVIEW_MODE", "false").lower() == "true"
     if sess is None and not preview:
@@ -648,16 +650,48 @@ async def settings_page(request: Request):
 
     prefs = tenant_prefs.read(tenant_id)
     snaps = telemetry.pipelines_for(tenant_id)
+    by_pid = {snap.get("pipeline_id"): snap for snap in snaps if snap.get("pipeline_id")}
+
+    # F8: always render the canonical 7 onboarding roles, even before a tenant
+    # has any heartbeats. New owners see the full safety matrix on day 0
+    # instead of the chicken-and-egg "no toggles until first send" hole.
     pipelines = []
+    seen: set[str] = set()
+    for role in roster.ACTIVATION_ROSTER:
+        pid = role["slug"]
+        seen.add(pid)
+        pipelines.append({
+            "pipeline_id": pid,
+            "display": role["name"],
+            "require_approval": bool(prefs.get("require_approval", {}).get(pid, False)),
+            "has_heartbeat": pid in by_pid,
+        })
+    # Plus any extra heartbeat-backed pipelines (e.g., AP's legacy patrol_automation)
+    # that aren't in the canonical roster - never hide work the tenant is doing.
     for snap in snaps:
         pid = snap.get("pipeline_id", "")
-        if not pid:
+        if not pid or pid in seen:
             continue
         pipelines.append({
             "pipeline_id": pid,
             "display": home_context._role_display(pid),
             "require_approval": bool(prefs.get("require_approval", {}).get(pid, False)),
+            "has_heartbeat": True,
         })
+
+    # F1 + F5: surface the kill-switch status so the template can render
+    # the correct Pause / Resume button + a "Paused since" banner.
+    tenant_status = "active"
+    paused_since = None
+    try:
+        config_path = _hb.tenant_root(tenant_id) / "tenant_config.json"
+        if config_path.exists():
+            cfg = _json.loads(config_path.read_text(encoding="utf-8"))
+            if isinstance(cfg, dict):
+                tenant_status = str(cfg.get("status") or "active")
+                paused_since = cfg.get("status_updated_at")
+    except (_hb.HeartbeatError, OSError, _json.JSONDecodeError):
+        pass
 
     return templates.TemplateResponse(
         request,
@@ -670,6 +704,8 @@ async def settings_page(request: Request):
             "prefs": prefs,
             "prefs_json": _json.dumps(prefs),
             "pipelines": pipelines,
+            "tenant_status": tenant_status,
+            "paused_since": paused_since,
         },
     )
 

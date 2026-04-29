@@ -209,6 +209,59 @@ def skip(tenant_id: str, draft_id: str, reason: str = "") -> dict[str, Any]:
     return entry
 
 
+def mark_send_failed(tenant_id: str, draft_id: str, reason: str) -> bool:
+    """Flip a previously-approved archived entry to status=approved_send_failed.
+
+    Called by services.dispatch when the outgoing handler raises after the
+    owner already clicked Approve. Atomic rewrite under the same lock the
+    enqueue / approve paths use.
+
+    Returns True if the entry was found and updated. False if no archive
+    file exists, the id is unknown, or the entry was already in a non-
+    approved status (skipped / approved_send_failed already).
+    """
+    archive = _archive_path(tenant_id)
+    if not archive.exists():
+        return False
+    with _LOCK:
+        try:
+            lines = archive.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return False
+        rows: list[Any] = []
+        found = False
+        for raw in lines:
+            stripped = raw.strip()
+            if not stripped:
+                continue
+            try:
+                row = json.loads(stripped)
+            except json.JSONDecodeError:
+                rows.append(stripped)
+                continue
+            if (
+                row.get("id") == draft_id
+                and row.get("status") in ("approved", "edited")
+            ):
+                row["status"] = "approved_send_failed"
+                row["dispatch_error"] = (reason or "")[:240]
+                row["dispatch_failed_at"] = datetime.now(timezone.utc).isoformat()
+                found = True
+            rows.append(row)
+        if not found:
+            return False
+        tmp = archive.with_suffix(archive.suffix + ".tmp")
+        tmp.write_text(
+            "".join(
+                (raw + "\n") if isinstance(raw, str) else (json.dumps(raw) + "\n")
+                for raw in rows
+            ),
+            encoding="utf-8",
+        )
+        tmp.replace(archive)
+        return True
+
+
 def summary(tenant_id: str) -> dict[str, int]:
     """Snapshot counts for the bell badge / admin view."""
     rows = list_pending(tenant_id)

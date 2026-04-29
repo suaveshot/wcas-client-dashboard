@@ -3247,6 +3247,39 @@ body.ap-receipts-drawer-open { overflow: hidden; }
   color: #fff;
 }
 
+/* W3 (settings F1): paused-state banner sits between the lead paragraph and
+   the first fieldset. Warm-cream + warn-tone border so it reads as informational
+   not destructive - the user just chose this state. */
+.ap-settings__paused-banner {
+  margin: var(--s-4) 0 var(--s-5) 0;
+  padding: var(--s-3) var(--s-4);
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-left: 3px solid var(--warn);
+  border-radius: var(--r-md);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.5;
+}
+.ap-settings__paused-banner strong {
+  color: var(--warn);
+}
+
+/* W3 (settings F8): roles without a heartbeat get a subtle "pending first run"
+   tag so the owner knows the toggle is wired but the pipeline hasn't sent yet. */
+.ap-settings__pending {
+  display: inline-block;
+  margin-left: var(--s-2);
+  padding: 1px 8px;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 500;
+  color: var(--ink-muted);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
 .ap-goal-form {
   margin-top: var(--s-5);
   padding: var(--s-5);

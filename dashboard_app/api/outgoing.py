@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from ..services import activity_feed, outgoing_queue
+from ..services import activity_feed, dispatch, outgoing_queue
 from ..services.tenant_ctx import require_tenant
 
 log = logging.getLogger("dashboard.outgoing")
@@ -67,7 +67,19 @@ async def api_outgoing_approve(
     except OSError:
         log.exception("decision log write failed tenant=%s", tenant_id)
 
-    return JSONResponse({"ok": True, "status": entry["status"], "draft_id": entry["id"]})
+    # W3: dispatch the approved entry. Closes audits/phase0_approvals.md::F1.
+    # On dispatch failure the archived entry is flipped to status=approved_send_failed
+    # by dispatch.deliver_approved -> outgoing_queue.mark_send_failed. The
+    # response surfaces the dispatch outcome separately so the FE can render a
+    # green "Approved & sent" toast or a yellow "Approved - send failed" toast.
+    dispatch_result = dispatch.deliver_approved(tenant_id, entry)
+
+    return JSONResponse({
+        "ok": True,
+        "status": entry["status"],
+        "draft_id": entry["id"],
+        "dispatch": dispatch_result,
+    })
 
 
 @router.post("/api/outgoing/{draft_id}/skip")

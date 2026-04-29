@@ -161,3 +161,138 @@ def test_summary_urgency_buckets(tmp_path, monkeypatch):
     assert summary["green"] == 1
     assert summary["amber"] == 1
     assert summary["red"] == 1
+
+
+# ---------------------------------------------------------------------------
+# W3: API approve endpoint dispatches via services.dispatch
+# (closes audits/phase0_approvals.md::F1)
+# ---------------------------------------------------------------------------
+
+
+def test_api_approve_dispatches_to_known_handler(tmp_path, monkeypatch):
+    """Approve a reviews-pipeline draft via API and confirm dispatch.deliver_approved
+    fires (DRY_RUN=true so the reference handler logs instead of hitting GBP)."""
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    monkeypatch.setenv("DISPATCH_DRY_RUN", "true")
+    entry = outgoing_queue.enqueue(
+        tenant_id="acme",
+        pipeline_id="reviews",
+        channel="gbp_review_reply",
+        recipient_hint="Maria",
+        subject="Reply",
+        body="Thank you Maria.",
+    )
+    client = TestClient(app)
+    cookie = _signed_cookie("acme")
+    resp = client.post(
+        f"/api/outgoing/{entry['id']}/approve",
+        json={},
+        cookies={"wcas_session": cookie},
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["status"] == "approved"
+    assert payload["dispatch"]["ok"] is True
+    assert payload["dispatch"]["status"] == "delivered"
+    assert payload["dispatch"]["result"]["dry_run"] is True
+
+
+def test_api_approve_returns_no_dispatcher_for_unregistered_pipeline(tmp_path, monkeypatch):
+    """Pipelines without a registered handler still get the queue approval
+    (the audit trail is honest: owner approved). The dispatch outcome is
+    surfaced as no_dispatcher so the FE can warn that nothing was sent yet."""
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    entry = outgoing_queue.enqueue(
+        tenant_id="acme",
+        pipeline_id="sales_pipeline",  # not in OUTGOING_HANDLERS yet
+        channel="email",
+        recipient_hint="x@y.com",
+        subject="x",
+        body="Body.",
+    )
+    client = TestClient(app)
+    cookie = _signed_cookie("acme")
+    resp = client.post(
+        f"/api/outgoing/{entry['id']}/approve",
+        json={},
+        cookies={"wcas_session": cookie},
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["status"] == "approved"
+    assert payload["dispatch"]["ok"] is False
+    assert payload["dispatch"]["reason"] == "no_dispatcher"
+
+
+def test_api_approve_marks_failed_when_handler_raises(tmp_path, monkeypatch):
+    """Handler raising DispatchError flips archived.jsonl status to
+    approved_send_failed for the durable record."""
+    import json as _json
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+
+    from dashboard_app.services import dispatch, heartbeat_store
+
+    def _boom(tenant_id, payload):
+        raise dispatch.DispatchError("simulated GBP outage")
+
+    monkeypatch.setitem(dispatch.OUTGOING_HANDLERS, "reviews", _boom)
+
+    entry = outgoing_queue.enqueue(
+        tenant_id="acme",
+        pipeline_id="reviews",
+        channel="gbp_review_reply",
+        recipient_hint="Maria",
+        subject="Reply",
+        body="Thank you Maria.",
+    )
+    client = TestClient(app)
+    cookie = _signed_cookie("acme")
+    resp = client.post(
+        f"/api/outgoing/{entry['id']}/approve",
+        json={},
+        cookies={"wcas_session": cookie},
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["dispatch"]["ok"] is False
+    assert "simulated GBP outage" in payload["dispatch"]["reason"]
+
+    archive = heartbeat_store.tenant_root("acme") / "outgoing" / "archived.jsonl"
+    rows = [_json.loads(line) for line in archive.read_text(encoding="utf-8").splitlines() if line.strip()]
+    target = next(r for r in rows if r["id"] == entry["id"])
+    assert target["status"] == "approved_send_failed"
+    assert "simulated GBP outage" in target["dispatch_error"]
+
+
+def test_api_approve_skips_when_tenant_paused(tmp_path, monkeypatch):
+    """Tenant paused -> dispatch.deliver_approved short-circuits with
+    reason=tenant_paused. The queue entry still archives as approved
+    (the owner did approve), but nothing actually sends."""
+    import json as _json
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+
+    from dashboard_app.services import heartbeat_store
+
+    config_path = heartbeat_store.tenant_root("acme") / "tenant_config.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(_json.dumps({"status": "paused"}), encoding="utf-8")
+
+    entry = outgoing_queue.enqueue(
+        tenant_id="acme",
+        pipeline_id="reviews",
+        channel="gbp_review_reply",
+        recipient_hint="Maria",
+        subject="Reply",
+        body="Thank you Maria.",
+    )
+    client = TestClient(app)
+    cookie = _signed_cookie("acme")
+    resp = client.post(
+        f"/api/outgoing/{entry['id']}/approve",
+        json={},
+        cookies={"wcas_session": cookie},
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["dispatch"]["ok"] is False
+    assert payload["dispatch"]["reason"] == "tenant_paused"

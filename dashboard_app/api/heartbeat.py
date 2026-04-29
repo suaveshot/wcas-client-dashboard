@@ -19,7 +19,7 @@ import os
 from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from ..services import heartbeat_store, rate_limit
+from ..services import dispatch, heartbeat_store, rate_limit
 
 log = logging.getLogger("dashboard.heartbeat")
 
@@ -65,6 +65,13 @@ async def api_heartbeat(
     except OSError:
         log.exception("heartbeat write failed tenant=%s pipeline=%s", tenant_id, pipeline_id)
         return JSONResponse({"received": True, "stored": False, "status": "write_failed"})
+
+    # W3: drain optional events array into goal bumpers (closes goals F1).
+    # Backward-compatible: heartbeats without an events key are no-ops.
+    # Pipelines that emit events do {"events": [{"kind": "lead.created"}, ...]}.
+    events = payload.get("events")
+    if isinstance(events, list) and events:
+        dispatch.handle_heartbeat_events(tenant_id, events)
 
     return JSONResponse({
         "received": True,

@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Body, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
-from ..services import audit_log, heartbeat_store, opus, rate_limit, recs_generator, recs_store
+from ..services import audit_log, dispatch, heartbeat_store, opus, rate_limit, recs_generator, recs_store
 from ..services.tenant_ctx import require_tenant
 
 log = logging.getLogger("dashboard.api.recs")
@@ -82,7 +82,13 @@ async def api_recs_act(
         rec_id=rec_id,
     )
 
-    return JSONResponse({"ok": True, "rec_id": rec_id, "action": action, "ts": entry["ts"]})
+    # W3: on Apply, hand off to dispatch.execute_rec for real per-rec-type
+    # execution (closes audits/phase0_recommendations.md::F1). Dismiss is
+    # intent-only and stays as the existing record-and-respond.
+    response: dict = {"ok": True, "rec_id": rec_id, "action": action, "ts": entry["ts"]}
+    if action == "apply":
+        response["dispatch"] = dispatch.execute_rec(tenant_id, rec_id)
+    return JSONResponse(response)
 
 
 @router.post("/api/recommendations/refresh")

@@ -1219,3 +1219,93 @@ Phase 0 page audit begins immediately, target page `/activate` per Sam's pick. R
 - I orphaned `assert payload["rl"] == "client"` during a test-file edit because my old_string didn't include the trailing assertion - the Edit tool happily inserted my new tests above it, leaving the assert hanging in someone else's test body. The pytest NameError caught it on the very next run. Cheap lesson: when your old_string ends mid-function, double-check there are no continuation lines after it.
 - `tests/test_no_em_dashes_in_source` is doing real work. Two em dashes inside narrative text describing the em-dash scrub itself slipped through Entry 17 because the demo-bundle scrubber didn't touch JOURNAL.md. The smoke test caught them today, six days late. The hook + test pair is the durable safety net the brand voice rule needs.
 
+# Entry 19 - 2026-04-29 (W3, 0.7.5 LOCAL: shared dispatch.py registry closes 4 audit findings)
+
+**Status:** 0.7.5 in feature branch `voice-and-data-pivot-0.6.0`, **NOT YET DEPLOYED to VPS** per scope decision. 391 tests passing (was 357 at end of 0.7.4; +34 W3 tests). Em-dash hook clean. AP heartbeat path untouched and verified backward-compatible.
+
+## Why this entry exists
+
+The post-hackathon big plan's W3 was originally written as "Generic reviews/run.py + tests + heartbeat." After Phase 0 audits surfaced **F1 across four separate surfaces** (`/approvals`, `/recommendations`, `/goals`, `/settings`) all rooting back to the same architectural gap - "the click toast lies; nothing actually executes" - we re-scoped W3 to the **shared dispatcher** that closes all four findings simultaneously. The audit's call (`audits/phase0_approvals.md::F1` recommendation 1) drove the redesign.
+
+This is real architecture: registry pattern lifted from `services/activation_tools.py`, gates that compose with the existing pause + per-pipeline approval prefs, and four entry points wired to the four surfaces.
+
+## What shipped (commit not yet cut)
+
+### `dashboard_app/services/dispatch.py` (NEW, ~570 lines)
+
+Central registry for closing the four F1 audit findings.
+
+Four entry points:
+
+- **`send(tenant_id, pipeline_id, channel, recipient_hint, subject, body, metadata)`** - pipeline-side. Honors:
+  - `tenant_config.json:status == "paused"` -> `{action: "skipped", reason: "tenant_paused"}`. Settings F1 short-circuit.
+  - `prefs.require_approval[pipeline_id]` is True -> `outgoing_queue.enqueue(...)` and `{action: "queued"}`. Settings F3 gate.
+  - else -> `OUTGOING_HANDLERS[pipeline_id]` for direct delivery -> `{action: "delivered"}`.
+
+- **`deliver_approved(tenant_id, archive_entry)`** - post-/approvals-click. Pause check only (the owner already approved; require_approval was upstream). On `DispatchError`, the archived.jsonl entry's status flips to `approved_send_failed` via `outgoing_queue.mark_send_failed(...)`. Future Send-Failures UI (approvals F12) reads from archived rows with that status.
+
+- **`execute_rec(tenant_id, rec_id)`** - /recommendations Apply. Looks up the rec in today's recs file, finds `REC_HANDLERS[rec.proposed_tool]`, runs it. Unknown tool types return `{queued_for_review: True}` per the audit's honest-stub recommendation - rec doesn't get silently dropped, Sam can hand-execute via /admin later.
+
+- **`handle_heartbeat_events(tenant_id, events)`** - goals F1. Pipelines opt-in by including an `events` array on the heartbeat payload. Maps event kinds to goal metrics:
+  - `lead.created` -> bumps `leads` goal
+  - `review.posted` with `stars >= 5` -> bumps `reviews` goal
+  - 4-star reviews ignored, per audit goals F1 spec.
+  - Backward-compatible: heartbeats without `events` are no-ops, AP keeps working.
+  - Never raises - heartbeat ingest must keep working even if a single event is malformed.
+
+Two reference handlers ship in W3 (the rest are W4-W7 work):
+- `OUTGOING_HANDLERS["reviews"]` -> `_send_review_reply` (DRY_RUN-gated, real GBP wire format is W4 work)
+- `REC_HANDLERS["review_reply_draft"]` -> `_rec_review_reply_draft` (creates draft in outgoing_queue)
+
+The two reference handlers chain: rec Apply queues a draft -> draft renders in /approvals -> Approve dispatches via `deliver_approved` -> handler logs the would-send. End-to-end exercised in tests via `DISPATCH_DRY_RUN=true`.
+
+Audit-log every dispatch attempt via `services.audit_log` (existing infrastructure). Errors caught at the handler boundary so a single dispatcher bug never crashes the API.
+
+### Wire-ups across 4 surfaces
+
+- `dashboard_app/api/outgoing.py::api_outgoing_approve` - after `outgoing_queue.approve()` returns, calls `dispatch.deliver_approved(tenant_id, entry)`. Response shape extends with a `dispatch` key carrying the outcome (`{ok, status, reason?, result?}`). The queue status (`approved` / `edited`) stays the source of truth for the queue itself; the dispatch outcome is reported alongside so the FE can render distinct toasts for "approved & sent" vs "approved but send failed."
+- `dashboard_app/api/recs.py::api_recs_act` - on `action == "apply"`, calls `dispatch.execute_rec(tenant_id, rec_id)` and threads outcome into the response. Dismiss is unchanged (intent-only).
+- `dashboard_app/api/heartbeat.py::api_heartbeat` - after `write_snapshot`, drains optional `events` array via `dispatch.handle_heartbeat_events(tenant_id, events)`. Only fires when the array is present and non-empty.
+- `dashboard_app/main.py::settings_page` + `templates/settings.html` + `static/settings.js` + `static/styles.css`:
+  - **F1 paused banner** + **F5 Resume button**: server reads `tenant_config.json:status` and renders either Pause or Resume + a "Paused {timestamp}" warn-tone banner above the fieldsets when status=paused. JS wires `#ap-resume-all` to `POST /api/tenant/resume`, mirroring the existing pause flow with a 800ms reload to refresh the rendered state.
+  - **F8 default 7 roles**: settings handler now always renders the canonical 7 onboarding roles (from `services.roster`) with `require_approval` defaulting off. Heartbeat-backed pipelines outside the canonical 7 (e.g., AP's legacy patrol_automation) still appear at the bottom. Roles without a heartbeat get a subtle "pending first run" pill so the owner knows the toggle is wired.
+
+### Supporting helper
+
+- `dashboard_app/services/outgoing_queue.py` - new public `mark_send_failed(tenant_id, draft_id, reason)`. Atomic rewrite under the same `_LOCK` the enqueue/approve paths use. Flips status `approved`/`edited` -> `approved_send_failed` and stamps `dispatch_error` + `dispatch_failed_at`. Returns False for unknown ids or non-approved entries (idempotent on repeat failures).
+
+### Cache-buster bumps
+
+- `templates/settings.html` -> `styles.css?v=20260429w3` + `settings.js?v=20260429w3` (per Hostinger 7-day static-cache rule).
+
+## Test additions (+34)
+
+| File | New tests | What they cover |
+|------|----------|-----------------|
+| `tests/test_dispatch.py` (NEW) | 26 | gate fns (`is_paused`, `requires_approval`); send/deliver_approved/execute_rec/handle_heartbeat_events four entry points; pause + require_approval routing; no-handler vs DispatchError paths; mark_send_failed atomic rewrite; heartbeat -> goals end-to-end via TestClient; 7-role default render; Pause vs Resume conditional render |
+| `tests/test_outgoing_queue.py` | +4 | API approve dispatches to known handler (DRY_RUN), no_dispatcher path for unregistered pipeline, archived status flips on handler raise, paused-tenant short-circuit |
+| `tests/test_recommendations.py` | +4 | API apply dispatches review_reply_draft, queued_for_review for unknown proposed_tool, dismiss skips dispatch, paused short-circuit |
+
+Total: 357 -> 391 passing. Em-dash test still green (cleaned 6 occurrences from new files; comment-style swapped to `-` to match the existing `activation_tools.py` convention).
+
+## Out of scope for this session (deliberately)
+
+Per the four scope decisions Sam confirmed up-front:
+
+1. **Other 6 outgoing handlers + 4 rec executors are honest stubs.** They land in W4-W7 alongside each generic pipeline (`gbp/run.py`, `email_assistant/run.py`, etc.). Today the registry is the contract; populating it is per-pipeline work.
+2. **Goals coverage limited to leads + reviews.** Revenue (Airtable Deals first-touch) and calls (Twilio voice) defer to Phase 1B as the audit prescribed. `other`-metric goals will get a manual "+1" UI when goals F1 lands UI work; the dispatcher already supports it through `count` parameter.
+3. **No VPS deploy.** Local-only this session per "test before first send" rule. The reference review-reply handler is `DISPATCH_DRY_RUN`-gated so the round-trip exercises end-to-end without hitting GBP. When tenant 2 is ready, set `DISPATCH_DRY_RUN=false` on the VPS and the wire format implementation lands as part of the W4 reviews/run.py commit.
+4. **Send Failures UI deferred** (approvals F12). The error path is wired (archived status flips, audit_log captures the reason), the UI surface is a Phase 2 polish. Approvals F12 already lists this finding as defer-to-Phase-2.
+
+## What's next
+
+W4: generic `gbp/run.py` + `seo/weekly_report.py` + tests + heartbeats. Both ship with their dispatcher slots populating in `OUTGOING_HANDLERS` (gbp post + GSC summary delivery). The W3 architecture is the foundation that lets W4 be a small per-pipeline change rather than a re-architecture.
+
+When deploy time comes, the standard 2-line VPS pull is unchanged - just `git pull && docker compose up -d --build`. Smoke checks: `/healthz` returns 0.7.5, `/settings` renders the 7-role default for a fresh tenant, `/api/outgoing/{id}/approve` returns the new `dispatch` key in its response shape.
+
+## Surprising bits this session
+
+- **The audit re-scoped W3 better than the original plan author did.** The big plan had W3 as "Generic reviews/run.py" (a per-pipeline tenantization scope). Phase 0 audits ran AFTER the big plan was written and surfaced the F1-across-four-surfaces pattern, which immediately reframed W3 from "first generic pipeline" to "shared dispatcher that unblocks 4 surfaces and prepares the ground for W4-W7's per-pipeline work." Sam's late-Tuesday note correctly redirected my Wednesday-morning attempt to read W3 as the original-scope item. The lesson: audits are allowed to re-shape weekly scope; the big plan is a Day-1 artifact, the audits are the Day-N truth.
+- **Em-dash hook caught new code on first full-suite run.** Even with the brand rule top-of-mind, six em dashes leaked into `dispatch.py` + `test_dispatch.py` section dividers and docstrings. The pre-commit hook would have caught these at commit time but the smoke test caught them on the test-suite tick which is faster feedback. Worth keeping the hook AND the smoke test - they catch at different moments.
+- **`isinstance(events, list) and events` filter at the heartbeat receiver was load-bearing.** Without it, AP's existing heartbeats (which have no `events` key) would call `dispatch.handle_heartbeat_events(tenant_id, None)` on every tick. The handler is defensive enough to no-op on None, but skipping the call entirely keeps the audit log cleaner and saves an unnecessary `goals.read()` per AP heartbeat (17 per day across the 17 pipelines).
+

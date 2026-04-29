@@ -25,10 +25,27 @@
             fetch('/api/tenant/pause', {method: 'POST', credentials: 'same-origin'})
                 .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
                 .then(function () {
-                    if (window.apToast) window.apToast.flash({kind: 'ok', text: 'All roles paused.'});
+                    if (window.apToast) window.apToast.flash({kind: 'ok', text: 'All roles paused. Reload to see the resume button.'});
+                    setTimeout(function () { window.location.reload(); }, 1200);
                 })
                 .catch(function (err) {
                     if (window.apToast) window.apToast.flash({kind: 'err', text: 'Could not pause: ' + err.message});
+                });
+        });
+    }
+
+    // W3 (settings F5): Resume button only renders server-side when paused.
+    var resumeBtn = document.getElementById('ap-resume-all');
+    if (resumeBtn) {
+        resumeBtn.addEventListener('click', function () {
+            fetch('/api/tenant/resume', {method: 'POST', credentials: 'same-origin'})
+                .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+                .then(function () {
+                    if (window.apToast) window.apToast.flash({kind: 'ok', text: 'All roles resumed.'});
+                    setTimeout(function () { window.location.reload(); }, 800);
+                })
+                .catch(function (err) {
+                    if (window.apToast) window.apToast.flash({kind: 'err', text: 'Could not resume: ' + err.message});
                 });
         });
     }
