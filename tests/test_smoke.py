@@ -331,24 +331,33 @@ def test_session_middleware_lets_valid_cookie_through():
 def test_no_em_dashes_in_source():
     """Brand rule enforcement: em dashes forbidden in committed HTML + CSS.
 
-    Skips: .venv, __pycache__, node_modules (third-party deps), and any
-    directory under "hackathon demo video/" which is local-only video
-    project artifacts not deployed.
+    Catches both the literal U+2014 character AND HTML-entity encodings
+    (&mdash;, &#8212;, &#x2014;) so the brand rule survives copy/paste
+    from word processors that auto-encode.
+
+    Skips: .venv, __pycache__, node_modules (third-party deps), the
+    audits/ tree (which legitimately quotes the forbidden patterns when
+    documenting violations), JOURNAL.md (internal change log that
+    references past entity-scrub fixes), and the local-only
+    "hackathon demo video/" project artifacts.
     """
     import pathlib
+    import re
 
-    em_dash = "—"
+    forbidden_re = re.compile(r"—|&mdash;|&#8212;|&#x2014;", re.IGNORECASE)
     root = pathlib.Path(__file__).resolve().parent.parent
-    skip_segments = (".venv", "__pycache__", "node_modules", "hackathon demo video")
+    skip_segments = (".venv", "__pycache__", "node_modules", "hackathon demo video", "audits")
+    skip_filenames = ("test_smoke.py", "JOURNAL.md")
     for ext in ("*.html", "*.css", "*.py", "*.md"):
         for path in root.rglob(ext):
             path_str = str(path)
             if any(seg in path_str for seg in skip_segments):
                 continue
-            if path.name == "test_smoke.py":
-                continue  # this file references the char for the check
+            if path.name in skip_filenames:
+                continue  # internal docs that legitimately reference the patterns
             text = path.read_text(encoding="utf-8", errors="replace")
-            assert em_dash not in text, f"em dash found in {path}"
+            match = forbidden_re.search(text)
+            assert match is None, f"em dash ({match.group()!r}) found in {path}"
 
 
 def test_no_llm_vendor_in_rendered_html():

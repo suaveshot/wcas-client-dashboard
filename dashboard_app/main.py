@@ -49,7 +49,7 @@ TEMPLATES_DIR = APP_DIR / "templates"
 app = FastAPI(
     title="WCAS Client Dashboard",
     description="Agency-level client activation + live automation telemetry.",
-    version="0.7.1",
+    version="0.7.2",
 )
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -162,7 +162,13 @@ async def landing(request: Request) -> HTMLResponse:
 @app.get("/healthz")
 async def healthz() -> JSONResponse:
     """Container health probe. Docker + UptimeRobot hit this."""
-    return JSONResponse({"status": "ok", "version": app.version})
+    return JSONResponse(
+        {"status": "ok", "version": app.version},
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+        },
+    )
 
 
 @app.get("/auth/dev-login")
