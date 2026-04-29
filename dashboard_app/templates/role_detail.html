@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/styles.css?v=20260429a">
+    <link rel="stylesheet" href="/static/styles.css?v=20260429w55">
     {% include "_prefs.html" %}
 </head>
 <body>
@@ -129,6 +129,67 @@
                     <p class="ap-role-detail__empty">
                         This role is connected and queued for its first run. Its next scheduled execution will push the first heartbeat; this page wakes up automatically when that lands.
                     </p>
+                {% endif %}
+
+                {# SEO Recommendations panel (W5.5) - only renders for /roles/seo #}
+                {% if seo_panel %}
+                <section class="ap-seo-recs" aria-labelledby="ap-seo-recs-title">
+                    <header class="ap-seo-recs__head">
+                        <h2 id="ap-seo-recs-title" class="ap-seo-recs__title">
+                            <span class="ap-seo-recs__spark" aria-hidden="true">&#x2726;</span>
+                            SEO Recommendations
+                        </h2>
+                        {% if seo_panel.generated_at_ago %}
+                        <p class="ap-seo-recs__meta">
+                            Generated {{ seo_panel.generated_at_ago }}
+                        </p>
+                        {% endif %}
+                    </header>
+
+                    {% if seo_panel.recommendations %}
+                        <ol class="ap-seo-recs__list">
+                            {% for rec in seo_panel.recommendations %}
+                            <li class="ap-seo-recs__item ap-seo-recs__item--{{ rec.urgency }}" data-rec-id="{{ rec.id }}">
+                                <header class="ap-seo-recs__item-head">
+                                    <span class="ap-seo-recs__urgency ap-seo-recs__urgency--{{ rec.urgency }}">{{ rec.urgency }}</span>
+                                    <h3 class="ap-seo-recs__item-title">{{ rec.title }}</h3>
+                                    {% if rec.estimated_traffic_lift %}
+                                    <span class="ap-seo-recs__lift">{{ rec.estimated_traffic_lift }}</span>
+                                    {% endif %}
+                                </header>
+                                <p class="ap-seo-recs__rationale">{{ rec.rationale }}</p>
+                                <p class="ap-seo-recs__action">
+                                    <strong>Try this:</strong> {{ rec.specific_action }}
+                                </p>
+                                {% if rec.evidence %}
+                                <ul class="ap-seo-recs__evidence">
+                                    {% for line in rec.evidence %}
+                                    <li>{{ line }}</li>
+                                    {% endfor %}
+                                </ul>
+                                {% endif %}
+                                {% if rec.page %}
+                                <p class="ap-seo-recs__page">Page: <code>{{ rec.page }}</code></p>
+                                {% endif %}
+                            </li>
+                            {% endfor %}
+                        </ol>
+                        {% if seo_panel.more_count %}
+                        <p class="ap-seo-recs__more">
+                            +{{ seo_panel.more_count }} more recommendation{% if seo_panel.more_count != 1 %}s{% endif %} below the top 5.
+                        </p>
+                        {% endif %}
+                    {% else %}
+                        <p class="ap-seo-recs__empty">
+                            No recommendations yet. The SEO engine runs weekly; once it has a full week of GA4 + GSC + ranking data it will surface specific changes here.
+                        </p>
+                    {% endif %}
+
+                    <footer class="ap-seo-recs__foot ap-seo-recs__foot--{{ seo_panel.brightlocal_status_state }}">
+                        <span class="ap-seo-recs__foot-dot" aria-hidden="true"></span>
+                        <span class="ap-seo-recs__foot-label">{{ seo_panel.brightlocal_status_label }}</span>
+                    </footer>
+                </section>
                 {% endif %}
 
                 {# Ask section #}

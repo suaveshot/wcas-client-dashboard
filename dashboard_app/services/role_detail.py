@@ -3,13 +3,18 @@ Role detail page composer.
 
 One pipeline at a time, rendered from its most-recent heartbeat snapshot
 plus the same display-name lookup table used by the home grid.
+
+For role_slug == "seo", the SEO Recommendations Engine output (W5.5)
+is also surfaced as a side panel; tenants without a recommender cache
+just see the standard heartbeat view.
 """
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
-from . import heartbeat_store, home_context, log_timeline
+from . import brightlocal_master, heartbeat_store, home_context, log_timeline, seo_recommender
 
 
 def _find_snapshot(tenant_id: str, role_slug: str) -> dict | None:
@@ -27,6 +32,8 @@ def build(tenant_id: str, role_slug: str) -> dict[str, Any]:
     underlying = role_slug.replace("-", "_")
     display_name = home_context._role_display(underlying)
 
+    seo_panel = _build_seo_panel(tenant_id) if underlying == "seo" else None
+
     if snap is None:
         return {
             "role_slug": role_slug,
@@ -40,6 +47,7 @@ def build(tenant_id: str, role_slug: str) -> dict[str, Any]:
             "state_rows": [],
             "timeline": [],
             "log_tail": "",
+            "seo_panel": seo_panel,
         }
 
     payload = snap.get("payload") or {}
@@ -69,4 +77,49 @@ def build(tenant_id: str, role_slug: str) -> dict[str, Any]:
         "state_rows": state_rows[:16],  # cap to avoid blowing up the card
         "timeline": [{"time": e.time_human, "level": e.level, "message": e.message} for e in timeline],
         "log_tail": raw_tail,
+        "seo_panel": seo_panel,
+    }
+
+
+def _build_seo_panel(tenant_id: str) -> dict[str, Any]:
+    """Build the SEO Recommendations side panel for /roles/seo.
+
+    Returns a dict with:
+      recommendations  list of top 5 recs ranked by urgency
+      generated_at_ago humanized "X days ago" or "" if no cache
+      brightlocal_status label string for the "Local rank tracking" footer
+      has_data         True if at least one rec OR brightlocal is provisioned
+    """
+    recs = seo_recommender.get_cached(tenant_id)
+    meta = seo_recommender.get_cache_meta(tenant_id)
+
+    generated_at = meta.get("generated_at")
+    generated_at_ago = ""
+    if isinstance(generated_at, (int, float)) and generated_at > 0:
+        try:
+            iso = datetime.fromtimestamp(generated_at, tz=timezone.utc).isoformat()
+            generated_at_ago, _ = home_context._humanize_ago(iso)
+        except (OverflowError, ValueError, OSError):
+            generated_at_ago = ""
+
+    bl_provisioned = brightlocal_master.is_provisioned()
+    bl_location = brightlocal_master.get_tenant_location_id(tenant_id)
+    if bl_provisioned and bl_location:
+        bl_status_label = "Local rank tracking provided by WCAS - Active."
+        bl_status_state = "active"
+    elif bl_provisioned:
+        bl_status_label = "Local rank tracking provided by WCAS - Provisioning needed."
+        bl_status_state = "pending_location"
+    else:
+        bl_status_label = "Local rank tracking not yet provisioned."
+        bl_status_state = "not_provisioned"
+
+    return {
+        "recommendations": recs[:seo_recommender.DEFAULT_TOP_N],
+        "more_count": max(0, len(recs) - seo_recommender.DEFAULT_TOP_N),
+        "generated_at_ago": generated_at_ago,
+        "source_summary": meta.get("source_summary") or {},
+        "brightlocal_status_label": bl_status_label,
+        "brightlocal_status_state": bl_status_state,
+        "has_data": bool(recs) or bl_provisioned,
     }

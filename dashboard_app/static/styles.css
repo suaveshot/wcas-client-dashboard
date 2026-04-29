@@ -2775,6 +2775,216 @@ body.ap-receipts-drawer-open { overflow: hidden; }
   color: var(--ink-muted);
 }
 
+/* SEO Recommendations panel (W5.5) */
+.ap-seo-recs {
+  margin-top: var(--s-6);
+  padding: var(--s-5);
+  background: var(--surface-soft, #faf7f1);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-3, 12px);
+}
+
+.ap-seo-recs__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-3);
+  margin-bottom: var(--s-4);
+  flex-wrap: wrap;
+}
+
+.ap-seo-recs__title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ap-seo-recs__spark {
+  color: var(--accent, #c79b3a);
+  font-size: 14px;
+}
+
+.ap-seo-recs__meta {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+
+.ap-seo-recs__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--s-3);
+}
+
+.ap-seo-recs__item {
+  padding: var(--s-4);
+  background: #fff;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-2, 10px);
+  border-left: 3px solid var(--border-soft);
+}
+
+.ap-seo-recs__item--high {
+  border-left-color: #b1372e;
+}
+
+.ap-seo-recs__item--medium {
+  border-left-color: #c79b3a;
+}
+
+.ap-seo-recs__item--low {
+  border-left-color: #6e7d6e;
+}
+
+.ap-seo-recs__item-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-bottom: var(--s-2);
+  flex-wrap: wrap;
+}
+
+.ap-seo-recs__urgency {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-soft, #faf7f1);
+  border: 1px solid var(--border-soft);
+}
+
+.ap-seo-recs__urgency--high {
+  background: #fcefee;
+  border-color: #e6b8b3;
+  color: #8a2a23;
+}
+
+.ap-seo-recs__urgency--medium {
+  background: #fbf3df;
+  border-color: #e3c980;
+  color: #87651b;
+}
+
+.ap-seo-recs__urgency--low {
+  background: #eff2ee;
+  border-color: #bcc7bc;
+  color: #455446;
+}
+
+.ap-seo-recs__item-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ap-seo-recs__lift {
+  font-size: 12px;
+  color: var(--accent, #6e9b50);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.ap-seo-recs__rationale {
+  margin: 0 0 var(--s-2) 0;
+  font-size: 14px;
+  color: var(--ink);
+  line-height: 1.5;
+}
+
+.ap-seo-recs__action {
+  margin: 0 0 var(--s-2) 0;
+  font-size: 14px;
+  color: var(--ink);
+  line-height: 1.5;
+}
+
+.ap-seo-recs__action strong {
+  font-weight: 600;
+}
+
+.ap-seo-recs__evidence {
+  margin: 0 0 0 var(--s-4);
+  padding: 0;
+  font-size: 12px;
+  color: var(--ink-muted);
+  list-style: square;
+}
+
+.ap-seo-recs__evidence li {
+  margin-bottom: 2px;
+}
+
+.ap-seo-recs__page {
+  margin: var(--s-2) 0 0 0;
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+
+.ap-seo-recs__page code {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  background: var(--surface-soft, #faf7f1);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.ap-seo-recs__more {
+  margin: var(--s-3) 0 0 0;
+  font-size: 12px;
+  color: var(--ink-muted);
+  text-align: center;
+}
+
+.ap-seo-recs__empty {
+  margin: 0;
+  font-size: 14px;
+  color: var(--ink-muted);
+  font-style: italic;
+}
+
+.ap-seo-recs__foot {
+  margin-top: var(--s-4);
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--border-soft);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+
+.ap-seo-recs__foot-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ink-muted);
+  flex-shrink: 0;
+}
+
+.ap-seo-recs__foot--active .ap-seo-recs__foot-dot {
+  background: #6e9b50;
+  box-shadow: 0 0 0 3px rgba(110, 155, 80, 0.18);
+}
+
+.ap-seo-recs__foot--pending_location .ap-seo-recs__foot-dot {
+  background: #c79b3a;
+}
+
+.ap-seo-recs__foot--not_provisioned .ap-seo-recs__foot-dot {
+  background: #b1372e;
+  opacity: 0.5;
+}
+
 @media (max-width: 640px) {
   .ap-receipts-drawer__panel { width: 100vw; }
 }
