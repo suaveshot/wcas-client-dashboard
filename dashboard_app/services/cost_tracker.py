@@ -5,7 +5,8 @@ Every direct Messages-API or Managed-Agents call wraps through record_call()
 which appends a single JSONL line per call:
 
     {"ts": "...", "tenant_id": "...", "model": "...",
-     "input_tokens": 0, "output_tokens": 0, "usd": 0.0, "kind": "message|agent"}
+     "input_tokens": 0, "output_tokens": 0, "usd": 0.0, "kind": "message|agent",
+     "vendor": "anthropic"}
 
 Two enforcement gates:
 
@@ -17,6 +18,15 @@ skip the call and surface a calm "budget reached today" message; nothing crashes
 
 Pricing table is approximate and intentionally editable; revisit when
 Anthropic posts final Opus 4.7 prices.
+
+Vendors other than Anthropic (BrightLocal, etc.) record via
+record_call_for_vendor() so cost rollup spans every paid API.
+
+Log rotation: when cost_log.jsonl crosses COST_LOG_MAX_BYTES (default 5 MiB)
+it is rotated to cost_log.YYYYMMDD-HHMMSS.jsonl in the same directory and a
+fresh empty active file is started. _sum_today() reads both the active file
+and any rotated file whose date prefix matches today's UTC date so spend
+counts stay accurate across rotations.
 """
 
 import json
@@ -43,10 +53,24 @@ _PRICING: dict[str, tuple[float, float]] = {
 _LOG_PATH = Path(os.getenv("COST_LOG_PATH", "/opt/wc-solns/_platform/cost_log.jsonl"))
 _LOCK = threading.Lock()
 
+# Default rotation threshold: 5 MiB. Override with COST_LOG_MAX_BYTES.
+_DEFAULT_MAX_BYTES = 5_242_880
+
 
 def _log_path() -> Path:
     # Allow overriding at call time for tests.
     return Path(os.getenv("COST_LOG_PATH", str(_LOG_PATH)))
+
+
+def _max_bytes() -> int:
+    raw = os.getenv("COST_LOG_MAX_BYTES")
+    if not raw:
+        return _DEFAULT_MAX_BYTES
+    try:
+        val = int(raw)
+        return val if val > 0 else _DEFAULT_MAX_BYTES
+    except ValueError:
+        return _DEFAULT_MAX_BYTES
 
 
 def estimate_usd(model: str, input_tokens: int, output_tokens: int) -> float:
@@ -58,6 +82,72 @@ def estimate_usd(model: str, input_tokens: int, output_tokens: int) -> float:
     return round((input_tokens / 1_000_000) * in_rate + (output_tokens / 1_000_000) * out_rate, 6)
 
 
+def _rotated_name_for(now: datetime) -> str:
+    return f"cost_log.{now.strftime('%Y%m%d-%H%M%S')}.jsonl"
+
+
+def _maybe_rotate_locked(path: Path) -> None:
+    """Rotate the cost log if it exceeds the configured size threshold.
+
+    Caller MUST hold _LOCK. If the file does not exist or is below the
+    threshold, this is a no-op. Atomic via os.replace.
+    """
+    try:
+        if not path.exists():
+            return
+        size = path.stat().st_size
+    except OSError:
+        return
+    if size < _max_bytes():
+        return
+    target = path.parent / _rotated_name_for(datetime.now(timezone.utc))
+    # If a rotated file with this exact second-stamp already exists (very
+    # unlikely; only when called twice in the same second), append a suffix.
+    if target.exists():
+        suffix = 1
+        while True:
+            candidate = path.parent / f"{target.stem}-{suffix}.jsonl"
+            if not candidate.exists():
+                target = candidate
+                break
+            suffix += 1
+    try:
+        os.replace(path, target)
+    except OSError:
+        log.exception("cost log rotation failed path=%s", path)
+
+
+def list_log_files_for_day(date_iso: str) -> list[Path]:
+    """Return all cost log files whose records could include the given UTC date.
+
+    `date_iso` must be YYYY-MM-DD. Includes the active cost_log.jsonl (always,
+    since it may hold records for today) plus any rotated
+    cost_log.YYYYMMDD-HHMMSS.jsonl whose date prefix matches.
+    """
+    active = _log_path()
+    out: list[Path] = []
+    parent = active.parent
+    if not parent.exists():
+        return [active] if active.exists() else []
+    target_compact = date_iso.replace("-", "")
+    for child in parent.iterdir():
+        if not child.is_file():
+            continue
+        name = child.name
+        if name == active.name:
+            continue
+        if not name.startswith("cost_log.") or not name.endswith(".jsonl"):
+            continue
+        # Expected: cost_log.YYYYMMDD-HHMMSS[-N].jsonl
+        stamp = name[len("cost_log.") : -len(".jsonl")]
+        date_part = stamp.split("-", 1)[0]
+        if date_part == target_compact:
+            out.append(child)
+    if active.exists():
+        out.append(active)
+    return out
+
+
 def record_call(
     tenant_id: str,
     model: str,
@@ -65,8 +155,13 @@ def record_call(
     output_tokens: int,
     kind: str = "message",
     note: str | None = None,
+    vendor: str = "anthropic",
 ) -> float:
-    """Append to cost log. Returns the USD estimate for the call."""
+    """Append to cost log. Returns the USD estimate for the call.
+
+    The `vendor` field is additive and defaults to "anthropic" for
+    backwards compatibility with existing callers.
+    """
     usd = estimate_usd(model, input_tokens, output_tokens)
     entry: dict[str, Any] = {
         "ts": datetime.now(timezone.utc).isoformat(),
@@ -76,6 +171,7 @@ def record_call(
         "output_tokens": output_tokens,
         "usd": usd,
         "kind": kind,
+        "vendor": vendor,
     }
     if note:
         entry["note"] = scrub(note)[:240]
@@ -84,6 +180,7 @@ def record_call(
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with _LOCK:
+            _maybe_rotate_locked(path)
             with path.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(entry) + "\n")
     except OSError:
@@ -92,29 +189,74 @@ def record_call(
     return usd
 
 
-def _sum_today(predicate) -> float:
-    path = _log_path()
-    if not path.exists():
-        return 0.0
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    total = 0.0
+def record_call_for_vendor(
+    vendor: str,
+    *,
+    tenant_id: str,
+    kind: str,
+    usd: float,
+    note: str | None = None,
+) -> float:
+    """Record a non-Anthropic vendor call (BrightLocal, etc.).
+
+    Token counts are omitted (they have no meaning for these vendors).
+    The `model` field is set to the vendor name so downstream rollups stay
+    consistent. Returns the recorded USD value.
+    """
     try:
-        with path.open("r", encoding="utf-8") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    row = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                ts = row.get("ts", "")
-                if not ts.startswith(today):
-                    continue
-                if predicate(row):
-                    total += float(row.get("usd") or 0)
+        usd_val = float(usd)
+    except (TypeError, ValueError):
+        usd_val = 0.0
+    usd_val = round(usd_val, 6)
+    entry: dict[str, Any] = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "tenant_id": tenant_id or "_unknown",
+        "model": vendor,
+        "usd": usd_val,
+        "kind": kind,
+        "vendor": vendor,
+    }
+    if note:
+        entry["note"] = scrub(note)[:240]
+
+    path = _log_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with _LOCK:
+            _maybe_rotate_locked(path)
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(entry) + "\n")
     except OSError:
-        return total
+        log.exception("cost log write failed path=%s", path)
+    return usd_val
+
+
+def _sum_today(predicate) -> float:
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    paths = list_log_files_for_day(today)
+    if not paths:
+        return 0.0
+    total = 0.0
+    for path in paths:
+        if not path.exists():
+            continue
+        try:
+            with path.open("r", encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        row = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    ts = row.get("ts", "")
+                    if not ts.startswith(today):
+                        continue
+                    if predicate(row):
+                        total += float(row.get("usd") or 0)
+        except OSError:
+            continue
     return total
 
 

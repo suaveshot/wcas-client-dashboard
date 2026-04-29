@@ -34,13 +34,21 @@ from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from . import heartbeat_store, platform_master
+from . import cost_tracker, heartbeat_store, platform_master
 
 log = logging.getLogger(__name__)
 
 API_BASE = "https://tools.brightlocal.com/seo-tools/api"
 DEFAULT_TIMEOUT = 30.0
 SIG_TTL_SECONDS = 1800  # BrightLocal sig expiry window
+
+# Estimate, not authoritative; Sam will tune from real BrightLocal invoices.
+# BrightLocal Local SEO Tools API bills per credit and credit-per-call varies
+# by endpoint, so this default is a safe upper bound for dev-cap purposes.
+BRIGHTLOCAL_COST_PER_CALL_USD = 0.10
+
+# Tenant id used for master-account-only calls (no specific tenant attached).
+_PLATFORM_TENANT_ID = "_platform"
 
 
 class BrightLocalError(RuntimeError):
@@ -49,6 +57,10 @@ class BrightLocalError(RuntimeError):
 
 class BrightLocalNotProvisioned(BrightLocalError):
     """Sam hasn't put a master.json at /opt/wc-solns/_platform/brightlocal/."""
+
+
+class BrightLocalBudgetExceeded(BrightLocalError):
+    """Raised when a BrightLocal call would exceed the daily dev or per-tenant cap."""
 
 
 # ---------------------------------------------------------------------------
@@ -214,6 +226,10 @@ def add_tenant_location(
         raise BrightLocalNotProvisioned("BrightLocal master.json missing api_key")
     api_secret = _master_secret(record)
 
+    allowed, reason = cost_tracker.should_allow(tenant_id or _PLATFORM_TENANT_ID)
+    if not allowed:
+        raise BrightLocalBudgetExceeded(reason or "budget exceeded")
+
     fields: dict[str, str] = _sign(api_key, api_secret)
     fields.update({
         "business-name": biz_name,
@@ -263,6 +279,13 @@ def add_tenant_location(
     cfg["brightlocal_provisioned_at"] = int(time.time())
     _write_tenant_config(tenant_id, cfg)
 
+    cost_tracker.record_call_for_vendor(
+        "brightlocal",
+        tenant_id=tenant_id or _PLATFORM_TENANT_ID,
+        kind="add_tenant_location",
+        usd=BRIGHTLOCAL_COST_PER_CALL_USD,
+    )
+
     return str(location_id)
 
 
@@ -292,6 +315,10 @@ def fetch_rankings(
     api_key = (record.get("api_key") or record.get("key") or "").strip()
     api_secret = _master_secret(record)
 
+    allowed, reason = cost_tracker.should_allow(tenant_id or _PLATFORM_TENANT_ID)
+    if not allowed:
+        raise BrightLocalBudgetExceeded(reason or "budget exceeded")
+
     params: dict[str, str] = _sign(api_key, api_secret)
     params["location-id"] = location_id
 
@@ -307,6 +334,13 @@ def fetch_rankings(
     if resp.get("success") is False or "errors" in resp:
         raise BrightLocalError(f"get-search-results returned errors: {resp.get('errors') or resp}")
 
+    cost_tracker.record_call_for_vendor(
+        "brightlocal",
+        tenant_id=tenant_id or _PLATFORM_TENANT_ID,
+        kind="fetch_rankings",
+        usd=BRIGHTLOCAL_COST_PER_CALL_USD,
+    )
+
     return resp
 
 
@@ -318,6 +352,8 @@ def is_provisioned() -> bool:
 
 __all__ = [
     "API_BASE",
+    "BRIGHTLOCAL_COST_PER_CALL_USD",
+    "BrightLocalBudgetExceeded",
     "BrightLocalError",
     "BrightLocalNotProvisioned",
     "add_tenant_location",
