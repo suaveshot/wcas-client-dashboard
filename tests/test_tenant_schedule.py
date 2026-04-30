@@ -292,3 +292,54 @@ def test_entries_without_pipeline_id_dropped(tenant_root):
     entries = ts.list_entries("acme")
     assert len(entries) == 1
     assert entries[0]["pipeline_id"] == "reviews"
+
+
+# ---------------------------------------------------------------------------
+# humanize_cron - cron -> human label for cold-start UI
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("expr,expected", [
+    ("0 10 * * 1", "Mon 10am"),
+    ("0 7 * * 1", "Mon 7am"),
+    ("0 9 * * 2,4,6", "Tue/Thu/Sat 9am"),
+    ("30 14 * * 5", "Fri 2:30pm"),
+    ("0 9-17 * * *", "hourly 9am-5pm"),
+    ("*/15 * * * *", "every 15 min"),
+    ("*/5 * * * *", "every 5 min"),
+    ("*/1 * * * *", "every minute"),
+    ("0 9 1-7 * 1", "first Mon of month 9am"),
+    ("0 8 * * *", "daily 8am"),
+    ("0 0 * * *", "daily 12am"),
+    ("0 12 * * *", "daily 12pm"),
+    ("15 13 * * *", "daily 1:15pm"),
+    ("0 8 15 * *", "day 15 8am"),
+])
+def test_humanize_cron_renders_common_patterns(expr, expected):
+    assert ts.humanize_cron(expr) == expected
+
+
+@pytest.mark.parametrize("expr", [
+    "",
+    "garbage",
+    "0 8",          # too few fields
+    "* * * * * *",  # too many fields
+    "60 8 * * *",   # minute out of range
+    "0 24 * * *",   # hour out of range
+    "0 8 * * 9",    # dow out of range
+])
+def test_humanize_cron_returns_empty_for_invalid(expr):
+    assert ts.humanize_cron(expr) == ""
+
+
+def test_humanize_cron_default_table_all_humanize():
+    """Every default cron in the catalog table must humanize so the
+    cold-start UI never falls back to the generic placeholder for a
+    catalog-default automation."""
+    for pid in (
+        "gbp", "seo", "reviews", "blog", "social",
+        "email_assistant", "chat_widget", "voice_ai",
+        "seo_recs", "review_engine", "win_back",
+    ):
+        cron = ts.default_cron_for(pid)
+        assert ts.humanize_cron(cron), f"default cron for {pid!r} did not humanize: {cron!r}"

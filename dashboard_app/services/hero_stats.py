@@ -23,7 +23,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from . import heartbeat_store
+from . import heartbeat_store, tenant_automations
 
 
 # Per-successful-run savings minutes. Intentionally conservative. Tunable via
@@ -47,6 +47,31 @@ TIME_SAVED_MINUTES = {
 DEFAULT_MINUTES_PER_RUN = 15
 
 
+# Cold-start projection: how many minutes per week each pipeline is expected
+# to save once running. Different from TIME_SAVED_MINUTES (per-run) because
+# high-frequency pipelines like chat_widget heartbeat shouldn't multiply
+# minute-savings by tick count. These are conservative weekly estimates that
+# render as the "expected" Weeks Saved value before the first real heartbeat.
+EXPECTED_WEEKLY_MINUTES = {
+    "patrol": 50,
+    "morning_reports": 50,
+    "seo": 90,
+    "blog": 120,
+    "sales_pipeline": 30,
+    "reviews": 15,
+    "social": 60,
+    "ads": 30,
+    "chat_widget": 10,
+    "gbp": 20,
+    "email_assistant": 60,
+    "voice_ai": 90,
+    "seo_recs": 30,
+    "review_engine": 20,
+    "win_back": 25,
+}
+DEFAULT_EXPECTED_WEEKLY_MINUTES = 30
+
+
 def _minutes_for(pid: str) -> int:
     return TIME_SAVED_MINUTES.get(pid, DEFAULT_MINUTES_PER_RUN)
 
@@ -55,12 +80,37 @@ _SPARK_UP = "M0,22 L15,18 L30,20 L45,14 L60,16 L75,10 L90,12 L105,7 L120,9 L135,
 _SPARK_FLAT = "M0,14 L25,13 L50,14 L75,13 L100,14 L125,13 L150,14 L175,13 L200,14"
 
 
+def _expected_weekly_minutes(tenant_id: str) -> tuple[float, list[str]]:
+    """Project minutes-saved-per-week from enabled automations alone (no
+    heartbeats required). Returns (minutes, enabled_ids). Returns (0, [])
+    when no automations are enabled, which preserves the "--" placeholder
+    for tenants who haven't seeded yet."""
+    try:
+        enabled = tenant_automations.enabled_ids(tenant_id)
+    except Exception:  # noqa: BLE001 - never crash the home render
+        return 0.0, []
+    if not enabled:
+        return 0.0, []
+    total = 0.0
+    for pid in enabled:
+        total += float(EXPECTED_WEEKLY_MINUTES.get(pid, DEFAULT_EXPECTED_WEEKLY_MINUTES))
+    return total, list(enabled)
+
+
 def _weeks_saved(tenant_id: str) -> tuple[str, str, dict[str, Any]]:
-    """Return (value_str, delta_text, meta) for the Weeks Saved card."""
+    """Return (value_str, delta_text, meta) for the Weeks Saved card.
+
+    Branches:
+      - Has successful heartbeats: show real cumulative weeks-saved.
+      - No heartbeats but enabled automations: project from
+        EXPECTED_WEEKLY_MINUTES so the card surfaces a confident number
+        instead of "--" / "calculating" before the first run lands.
+      - Neither: honest "--" placeholder.
+    """
     try:
         snaps = heartbeat_store.read_all(tenant_id)
     except heartbeat_store.HeartbeatError:
-        return "--", "calculating", {"run_count": 0}
+        snaps = []
 
     total_runs = 0
     total_minutes = 0.0
@@ -79,18 +129,38 @@ def _weeks_saved(tenant_id: str) -> tuple[str, str, dict[str, Any]]:
         total_minutes += mins
         contributors.append(pid)
 
-    if total_minutes <= 0:
-        return "--", "calculating", {"run_count": total_runs}
+    if total_minutes > 0:
+        weeks = total_minutes / 60.0 / 40.0
+        if weeks < 0.1:
+            value = f"{total_minutes/60:.1f}h"
+        elif weeks < 1:
+            value = f"{weeks:.1f}w"
+        else:
+            value = f"{weeks:.1f}"
+        delta = f"across {total_runs} automated actions"
+        return value, delta, {
+            "run_count": total_runs,
+            "contributors": sorted(set(contributors)),
+            "projected": False,
+        }
 
-    weeks = total_minutes / 60.0 / 40.0
-    if weeks < 0.1:
-        value = f"{total_minutes/60:.1f}h"
-    elif weeks < 1:
-        value = f"{weeks:.1f}w"
-    else:
-        value = f"{weeks:.1f}"
-    delta = f"across {total_runs} automated actions"
-    return value, delta, {"run_count": total_runs, "contributors": sorted(set(contributors))}
+    expected_min, enabled_ids = _expected_weekly_minutes(tenant_id)
+    if expected_min > 0:
+        hours = expected_min / 60.0
+        value = f"~{hours:.1f}h"
+        delta = (
+            f"projected once your {len(enabled_ids)} role"
+            f"{'s' if len(enabled_ids) != 1 else ''} run weekly"
+        )
+        return value, delta, {
+            "run_count": 0,
+            "contributors": [],
+            "projected": True,
+            "enabled_count": len(enabled_ids),
+            "weekly_minutes": expected_min,
+        }
+
+    return "--", "calculating", {"run_count": 0, "projected": False}
 
 
 def _goal_progress(tenant_id: str) -> tuple[str, str, str]:
@@ -130,20 +200,34 @@ def build(tenant_id: str) -> list[dict[str, Any]]:
     weeks_val, weeks_delta, weeks_meta = _weeks_saved(tenant_id)
     goal_val, goal_delta, goal_status = _goal_progress(tenant_id)
 
+    if weeks_meta.get("projected"):
+        weeks_status = "projected"
+        weeks_tip = (
+            f"Projection from {weeks_meta.get('enabled_count', 0)} enabled "
+            "roles. Real number lands after your first heartbeats arrive."
+        )
+        weeks_spark = _SPARK_UP
+    elif weeks_val != "--":
+        weeks_status = "on track"
+        weeks_tip = (
+            f"Derived from {weeks_meta['run_count']} automated actions across your roles"
+        )
+        weeks_spark = _SPARK_UP
+    else:
+        weeks_status = "learning"
+        weeks_tip = "Populates after your first automated run lands."
+        weeks_spark = _SPARK_FLAT
+
     cards: list[dict[str, Any]] = [
         {
             "label": "Weeks saved",
             "value": weeks_val,
-            "direction": "up" if weeks_val != "--" else "up",
+            "direction": "up",
             "delta_text": weeks_delta,
             "trajectory": "ok",
-            "status_text": "on track" if weeks_val != "--" else "learning",
-            "verified_tip": (
-                f"Derived from {weeks_meta['run_count']} automated actions across your roles"
-                if weeks_val != "--"
-                else "Populates after your first automated run lands."
-            ),
-            "spark_path": _SPARK_UP if weeks_val != "--" else _SPARK_FLAT,
+            "status_text": weeks_status,
+            "verified_tip": weeks_tip,
+            "spark_path": weeks_spark,
         },
         {
             "label": "Revenue influenced",

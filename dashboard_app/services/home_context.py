@@ -29,7 +29,22 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from . import activity_feed, automation_catalog, hero_stats, notifications, rec_actions, recent_asks, recs_store, seeded_recs, telemetry, tenant_automations
+from . import (
+    activity_feed,
+    automation_catalog,
+    hero_stats,
+    notifications,
+    rec_actions,
+    recent_asks,
+    recs_store,
+    sample_outputs,
+    seeded_recs,
+    telemetry,
+    tenant_automations,
+    tenant_kb,
+    tenant_schedule,
+    voice_card,
+)
 
 
 _SPARK_UP = "M0,22 L15,18 L30,20 L45,14 L60,16 L75,10 L90,12 L105,7 L120,9 L135,5 L150,7 L165,3 L180,5 L200,2"
@@ -132,9 +147,17 @@ def build(tenant_id: str, owner_name: str = "", tenant_display: str = "") -> dic
                     snap.get("status", ""), age_hours
                 )
             else:
-                last_run_text, age_hours = "queued", 0.0
-                age_by_pid[aid] = age_hours
-                state, state_text, grade, spark = "pending", "pending first run", None, _SPARK_FLAT
+                age_by_pid[aid] = 0.0
+                next_run_label = _next_run_label_for(tenant_id, aid)
+                last_run_text = next_run_label or "queued"
+                state = "pending"
+                state_text = (
+                    f"first run {next_run_label}"
+                    if next_run_label
+                    else "pending first run"
+                )
+                grade = None
+                spark = _SPARK_FLAT
             roles.append({
                 "slug": aid.replace("_", "-"),
                 "name": entry.name,
@@ -199,11 +222,24 @@ def build(tenant_id: str, owner_name: str = "", tenant_display: str = "") -> dic
             "Your weekly recap lands Sunday."
         )
     else:
-        narrative = (
-            "Your roles are connected and queued for their first run. The "
-            "first heartbeat will arrive after the next scheduled execution; "
-            "this page will wake up as soon as data flows."
-        )
+        # Cold-start narrative. Lead with "Your roles are connected" so the
+        # roles-pending placeholder pin test stays valid, then add a relief
+        # frame (per feedback_wcas_relief_framing). We extend the owner, we
+        # do not replace them (per feedback_wcas_extension_not_replacement).
+        pending_count = len(rendered) or len(roles)
+        if pending_count:
+            narrative = (
+                "Your roles are connected and queued for their first run. The "
+                f"work piling up across {pending_count} role"
+                f"{'s' if pending_count != 1 else ''} is ready to land in your "
+                "voice, with your last word on every send."
+            )
+        else:
+            narrative = (
+                "Your roles are connected and queued for their first run. The "
+                "first heartbeat will arrive after the next scheduled execution; "
+                "this page will wake up as soon as data flows."
+            )
 
     # Prefer the most recent Opus refresh when fresh; degrade to seeded recs
     # so the surface is never blank for cold-start tenants.
@@ -213,6 +249,8 @@ def build(tenant_id: str, owner_name: str = "", tenant_display: str = "") -> dic
     else:
         live_recs = seeded_recs.build(tenant_id, limit=12)
     live_recs = rec_actions.filter_unacted(tenant_id, live_recs)[:3]
+
+    is_cold_start = not has_live
 
     ctx = {
         "tenant_name": display_name,
@@ -232,8 +270,126 @@ def build(tenant_id: str, owner_name: str = "", tenant_display: str = "") -> dic
         "feed": activity_feed.build(tenant_id),
         "recommendations": live_recs,
         "total_recs": len(live_recs),
+        # Cold-start surfaces. Each is empty/None when its source isn't
+        # populated, so the template can use {% if x %} to decide whether
+        # to render the section without crashing on missing data.
+        "is_cold_start": is_cold_start,
+        "activation_samples": _activation_samples_summary(tenant_id),
+        "this_week_timeline": _this_week_timeline(tenant_id, enabled_ids),
+        "voice_teaser": _voice_teaser(tenant_id),
+        "kb_summary": _kb_summary(tenant_id),
     }
     return _maybe_demo_mode(ctx)
+
+
+def _next_run_label_for(tenant_id: str, pipeline_id: str) -> str:
+    """Look up the cron for a pending automation (preferring its actual
+    schedule entry, falling back to the catalog default) and humanize it
+    for the cold-start ring's state_text."""
+    entry = tenant_schedule.get_entry(tenant_id, pipeline_id)
+    cron = ""
+    if entry and entry.get("enabled", True):
+        c = entry.get("cron")
+        if isinstance(c, str) and c.strip():
+            cron = c
+    if not cron:
+        cron = tenant_schedule.default_cron_for(pipeline_id)
+    return tenant_schedule.humanize_cron(cron)
+
+
+def _activation_samples_summary(tenant_id: str) -> list[dict[str, Any]]:
+    """Lightweight summary of cached activation samples for the cold-start
+    carousel. We strip body_markdown so the home context stays small; the
+    detail panel fetches the full sample on demand."""
+    try:
+        samples = sample_outputs.list_samples(tenant_id)
+    except Exception:  # noqa: BLE001 - never break home render
+        return []
+    out: list[dict[str, Any]] = []
+    for s in samples:
+        if not isinstance(s, dict):
+            continue
+        out.append({
+            "slug": s.get("slug"),
+            "title": s.get("title") or "",
+            "preview": s.get("preview") or "",
+            "status": s.get("status") or "ok",
+            "generated_at": s.get("generated_at"),
+        })
+    return out
+
+
+def _this_week_timeline(
+    tenant_id: str,
+    enabled_ids: list[str],
+) -> list[dict[str, Any]]:
+    """Render a cadence summary of what will land this week, derived from
+    schedule.json (or default crons when no entry exists yet). Returns at
+    most one row per enabled automation."""
+    if not enabled_ids:
+        return []
+    by_pid: dict[str, str] = {}
+    for entry in tenant_schedule.list_entries(tenant_id, enabled_only=True):
+        pid = entry.get("pipeline_id")
+        cron = entry.get("cron")
+        if isinstance(pid, str) and isinstance(cron, str):
+            by_pid[pid] = cron
+    rows: list[dict[str, Any]] = []
+    for aid in enabled_ids:
+        catalog_entry = automation_catalog.get(aid)
+        if catalog_entry is None:
+            continue
+        cron = by_pid.get(aid) or tenant_schedule.default_cron_for(aid)
+        when_label = tenant_schedule.humanize_cron(cron)
+        if not when_label:
+            continue
+        rows.append({
+            "pipeline_id": aid,
+            "pipeline_name": catalog_entry.name,
+            "when_label": when_label,
+            "cron": cron,
+        })
+    return rows
+
+
+def _voice_teaser(tenant_id: str) -> dict[str, Any] | None:
+    """Voice card teaser for the cold-start narrative band. Returns None
+    when no voice card has been captured during activation yet."""
+    try:
+        card = voice_card.load(tenant_id)
+    except Exception:  # noqa: BLE001
+        return None
+    if not card:
+        return None
+    traits = card.get("traits") or []
+    if not isinstance(traits, list):
+        traits = []
+    cleaned = [str(t).strip() for t in traits if t]
+    voice_sample = str(card.get("voice_sample") or "").strip()
+    if not cleaned and not voice_sample:
+        return None
+    return {
+        "traits": cleaned[:3],
+        "voice_sample": voice_sample[:240],
+    }
+
+
+def _kb_summary(tenant_id: str) -> str | None:
+    """First two lines of kb/company.md as a cold-start callout. Returns
+    None when no company section exists."""
+    try:
+        company = tenant_kb.read_section(tenant_id, "company")
+    except Exception:  # noqa: BLE001
+        return None
+    if not company:
+        return None
+    lines = [line.strip() for line in company.splitlines() if line.strip()]
+    # Skip a leading markdown heading if present.
+    body = [line for line in lines if not line.startswith("#")]
+    if not body:
+        return None
+    excerpt = " ".join(body[:2])
+    return excerpt[:260]
 
 
 def _maybe_demo_mode(ctx: dict[str, Any]) -> dict[str, Any]:

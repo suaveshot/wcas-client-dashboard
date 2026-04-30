@@ -507,6 +507,107 @@ def default_cron_for(pipeline_id: str) -> str:
     return _DEFAULT_CRON_BY_ID.get(pipeline_id, _DEFAULT_FALLBACK_CRON)
 
 
+# ---------------------------------------------------------------------------
+# cron -> human label (cold-start UI summaries)
+# ---------------------------------------------------------------------------
+
+_DAY_LABELS = ("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
+
+
+def _format_clock(hour: int, minute: int = 0) -> str:
+    suffix = "am" if hour < 12 else "pm"
+    h12 = hour % 12 or 12
+    if minute:
+        return f"{h12}:{minute:02d}{suffix}"
+    return f"{h12}{suffix}"
+
+
+def humanize_cron(expr: str) -> str:
+    """Render a cron expression as a short human label suitable for UI
+    summaries (e.g. "Mon 10am", "every 15 min", "hourly 9am-5pm").
+
+    Returns an empty string when the expression is too irregular to
+    summarize confidently. Callers should fall back to a generic label
+    in that case rather than guess.
+
+    Pure read-only helper. Used by home_context for cold-start "next run"
+    labels and by the timeline section that previews this-week scheduling.
+    """
+    if not isinstance(expr, str):
+        return ""
+    parts = expr.strip().split()
+    if len(parts) != 5:
+        return ""
+    minute_token, hour_token, dom, _month, dow = parts
+
+    # Minute step pattern: */N
+    if minute_token.startswith("*/"):
+        try:
+            n = int(minute_token[2:])
+        except ValueError:
+            return ""
+        if n <= 0:
+            return ""
+        return "every minute" if n == 1 else f"every {n} min"
+
+    try:
+        m = int(minute_token)
+    except ValueError:
+        return ""
+    if not (0 <= m <= 59):
+        return ""
+
+    # Hour range with literal minute: "0 9-17 * * *" -> "hourly 9am-5pm"
+    if (
+        hour_token != "*"
+        and "-" in hour_token
+        and "/" not in hour_token
+        and "," not in hour_token
+    ):
+        try:
+            a_s, b_s = hour_token.split("-", 1)
+            a, b = int(a_s), int(b_s)
+        except ValueError:
+            return ""
+        if 0 <= a <= 23 and 0 <= b <= 23 and a <= b:
+            return f"hourly {_format_clock(a)}-{_format_clock(b)}"
+        return ""
+
+    # Specific hour required from here.
+    if hour_token == "*":
+        return ""
+    try:
+        h = int(hour_token)
+    except ValueError:
+        return ""
+    if not (0 <= h <= 23):
+        return ""
+
+    time_str = _format_clock(h, m)
+
+    # Day-of-week list (e.g. "1", "2,4,6") -> "Mon", "Tue/Thu/Sat"
+    if dow != "*":
+        days: list[str] = []
+        for chunk in dow.split(","):
+            if not chunk.isdigit():
+                return ""
+            d = int(chunk)
+            if not (0 <= d <= 6):
+                return ""
+            days.append(_DAY_LABELS[d])
+        # "0 9 1-7 * 1" pattern: first <day> of month at <time>.
+        if dom != "*" and "-" in dom and len(days) == 1:
+            a_s, b_s = dom.split("-", 1)
+            if a_s == "1" and b_s == "7":
+                return f"first {days[0]} of month {time_str}"
+        return f"{'/'.join(days)} {time_str}"
+
+    if dom != "*" and dom.isdigit():
+        return f"day {dom} {time_str}"
+
+    return f"daily {time_str}"
+
+
 def seed_for_tier(
     tenant_id: str,
     tier: str,
@@ -562,6 +663,7 @@ __all__ = [
     "disable",
     "enable",
     "get_entry",
+    "humanize_cron",
     "is_enabled",
     "is_valid_cron",
     "list_due",

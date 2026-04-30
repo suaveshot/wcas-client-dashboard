@@ -58,15 +58,28 @@ def write_snapshot(tenant_id: str, pipeline_id: str, payload: dict[str, Any]) ->
 
 
 def read_all(tenant_id: str) -> list[dict[str, Any]]:
-    """All stored snapshots for a tenant, most recent first."""
+    """All stored snapshots for a tenant, most recent first.
+
+    Other services (voice_card, crm_mapping) co-locate their JSON under
+    state_snapshot/. Filter on the heartbeat shape so those files are not
+    miscounted as pipeline heartbeats - which would otherwise flip a
+    cold-start tenant out of the cold-start branch the moment they save
+    a voice card or CRM mapping during activation.
+    """
     root = tenant_root(tenant_id) / "state_snapshot"
     if not root.exists():
         return []
     rows: list[dict[str, Any]] = []
     for path in root.glob("*.json"):
         try:
-            rows.append(json.loads(path.read_text(encoding="utf-8")))
+            row = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
+        if not isinstance(row, dict):
+            continue
+        pid = row.get("pipeline_id")
+        if not isinstance(pid, str) or not pid:
+            continue
+        rows.append(row)
     rows.sort(key=lambda r: r.get("received_at", ""), reverse=True)
     return rows

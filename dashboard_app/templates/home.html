@@ -173,7 +173,75 @@
                 <span id="ap-narrative-label" class="ap-narrative__eyebrow">This week · {{ today_date }}</span>
                 <p class="ap-narrative__body">{{ narrative }}</p>
                 <p class="ap-narrative__meta">Updated {{ refresh_ago }} · Next refresh {{ next_refresh }}</p>
+
+                {% if is_cold_start and (kb_summary or voice_teaser) %}
+                <div class="ap-cold-start__teasers">
+                    {% if kb_summary %}
+                    <div class="ap-cold-start__teaser ap-cold-start__teaser--kb">
+                        <span class="ap-cold-start__teaser-label">What we know about you</span>
+                        <p class="ap-cold-start__teaser-body">{{ kb_summary }}</p>
+                    </div>
+                    {% endif %}
+                    {% if voice_teaser %}
+                    <div class="ap-cold-start__teaser ap-cold-start__teaser--voice">
+                        <span class="ap-cold-start__teaser-label">In your voice</span>
+                        {% if voice_teaser.voice_sample %}
+                        <p class="ap-cold-start__teaser-body">"{{ voice_teaser.voice_sample }}"</p>
+                        {% endif %}
+                        {% if voice_teaser.traits %}
+                        <ul class="ap-cold-start__traits" aria-label="Voice traits">
+                            {% for trait in voice_teaser.traits %}
+                            <li class="ap-cold-start__trait">{{ trait }}</li>
+                            {% endfor %}
+                        </ul>
+                        {% endif %}
+                    </div>
+                    {% endif %}
+                </div>
+                {% endif %}
             </section>
+
+            {% if is_cold_start and this_week_timeline %}
+            <section class="ap-cold-start__timeline" aria-labelledby="ap-timeline-h">
+                <div class="ap-section-head">
+                    <div class="ap-section-head__titles">
+                        <span class="ap-section-head__eyebrow">What lands this week</span>
+                        <h2 id="ap-timeline-h">Coming up</h2>
+                    </div>
+                </div>
+                <ul class="ap-timeline">
+                    {% for row in this_week_timeline %}
+                    <li class="ap-timeline__row">
+                        <span class="ap-timeline__role">{{ row.pipeline_name }}</span>
+                        <span class="ap-timeline__when">{{ row.when_label }}</span>
+                    </li>
+                    {% endfor %}
+                </ul>
+            </section>
+            {% endif %}
+
+            {% if is_cold_start and activation_samples %}
+            <section class="ap-cold-start__samples" aria-labelledby="ap-samples-h">
+                <div class="ap-section-head">
+                    <div class="ap-section-head__titles">
+                        <span class="ap-section-head__eyebrow">What this looks like in your voice</span>
+                        <h2 id="ap-samples-h">First-week samples</h2>
+                    </div>
+                </div>
+                <div class="ap-sample-strip" role="list">
+                    {% for sample in activation_samples %}
+                    <article class="ap-sample-card" role="listitem" data-sample-slug="{{ sample.slug }}">
+                        <span class="ap-sample-card__eyebrow">{{ sample.slug|replace('_', ' ')|title }}</span>
+                        <h3 class="ap-sample-card__title">{{ sample.title }}</h3>
+                        {% if sample.preview %}
+                        <p class="ap-sample-card__preview">{{ sample.preview }}</p>
+                        {% endif %}
+                        <a class="ap-sample-card__link" href="/roles/{{ sample.slug|replace('_', '-') }}">See the draft &rarr;</a>
+                    </article>
+                    {% endfor %}
+                </div>
+            </section>
+            {% endif %}
 
             {# Row 2 - Hero stats strip #}
             <section class="ap-hero-stats" aria-label="Key results">
