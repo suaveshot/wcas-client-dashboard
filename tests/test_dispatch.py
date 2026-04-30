@@ -499,3 +499,657 @@ def test_settings_paused_renders_resume_button_with_banner(tmp_path, monkeypatch
     assert 'id="ap-paused-banner"' in body
     assert "All roles are paused." in body
     assert "2026-04-29T10:00:00Z" in body
+
+
+# ---------------------------------------------------------------------------
+# OUTGOING_HANDLERS - live wire paths
+#
+# Each new handler gets one happy-path (DRY_RUN) test, one live-path test
+# with a fake HTTP/SMTP injector, and one failure test that exercises the
+# DispatchError conversion (closes the W6 partial-method-surface lesson at
+# the dispatcher boundary).
+# ---------------------------------------------------------------------------
+
+
+from dashboard_app.services import (  # noqa: E402
+    credentials as _credentials,
+    crm_mapping as _crm_mapping,
+    ghl_provider as _ghl_provider,
+    hubspot_provider as _hubspot_provider,
+    pipedrive_provider as _pipedrive_provider,
+)
+
+
+class _FakeHTTPResponse:
+    def __init__(self, status_code: int = 200, text: str = "", payload=None):
+        self.status_code = status_code
+        self.text = text
+        self._payload = payload
+
+    def json(self):
+        return self._payload
+
+
+def _seed_crm_mapping(tenant_id: str, kind: str) -> None:
+    """Drop a minimal crm_mapping.json with `kind` set so _resolve_sales_kind
+    finds it. crm_mapping.save() doesn't accept kind; write the file directly."""
+    path = _crm_mapping._path(tenant_id)
+    path.write_text(json.dumps({"kind": kind, "base_id": "x", "table_name": "y"}),
+                    encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# reviews - live GBP path
+# ---------------------------------------------------------------------------
+
+
+def test_reviews_live_path_posts_to_gbp(tmp_path, monkeypatch):
+    """Live reviews handler builds the correct review-resource URL, sends a
+    Bearer token, and returns posted=True on 200."""
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    monkeypatch.delenv("DISPATCH_DRY_RUN", raising=False)
+
+    captured: dict = {}
+
+    def fake_post(url, *, token, json_body):
+        captured["url"] = url
+        captured["token"] = token
+        captured["body"] = json_body
+        return _FakeHTTPResponse(status_code=200, text="{}", payload={})
+
+    monkeypatch.setattr(dispatch, "_post_gbp", fake_post)
+    monkeypatch.setattr(dispatch.credentials, "access_token",
+                        lambda tid, prov: "fake-google-token")
+
+    entry = {
+        "id": "draft-reviews-live-1",
+        "pipeline_id": "reviews",
+        "channel": "gbp_review_reply",
+        "recipient_hint": "Maria",
+        "subject": "(no subject)",
+        "body": "Thank you Maria.",
+        "metadata": {
+            "location_path": "accounts/123/locations/456",
+            "review_id": "rev_abc",
+        },
+    }
+    result = dispatch.deliver_approved("acme", entry)
+    assert result["ok"] is True
+    assert result["status"] == "delivered"
+    assert captured["url"] == (
+        "https://mybusiness.googleapis.com/v4/"
+        "accounts/123/locations/456/reviews/rev_abc/reply"
+    )
+    assert captured["token"] == "fake-google-token"
+    assert captured["body"] == {"comment": "Thank you Maria."}
+
+
+def test_reviews_live_path_converts_4xx_to_dispatch_error(tmp_path, monkeypatch):
+    """A 4xx response from GBP flips the archived entry to
+    approved_send_failed with the HTTP status surfaced."""
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    monkeypatch.delenv("DISPATCH_DRY_RUN", raising=False)
+
+    monkeypatch.setattr(dispatch, "_post_gbp",
+                        lambda url, **kw: _FakeHTTPResponse(403, text="Permission denied"))
+    monkeypatch.setattr(dispatch.credentials, "access_token",
+                        lambda tid, prov: "fake-token")
+
+    enqueued = outgoing_queue.enqueue(
+        tenant_id="acme",
+        pipeline_id="reviews",
+        channel="gbp_review_reply",
+        recipient_hint="Maria",
+        subject="x",
+        body="Thanks",
+        metadata={"location_path": "accounts/1/locations/2", "review_id": "r1"},
+    )
+    approved = outgoing_queue.approve("acme", enqueued["id"])
+
+    result = dispatch.deliver_approved("acme", approved)
+    assert result["ok"] is False
+    assert "GBP reply rejected: HTTP 403" in result["reason"]
+
+    archive = heartbeat_store.tenant_root("acme") / "outgoing" / "archived.jsonl"
+    rows = [json.loads(line) for line in archive.read_text(encoding="utf-8").splitlines() if line.strip()]
+    target = next(r for r in rows if r["id"] == approved["id"])
+    assert target["status"] == "approved_send_failed"
+
+
+def test_reviews_live_path_missing_review_name_raises(tmp_path, monkeypatch):
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    monkeypatch.delenv("DISPATCH_DRY_RUN", raising=False)
+
+    entry = {
+        "id": "draft-reviews-bad",
+        "pipeline_id": "reviews",
+        "channel": "gbp_review_reply",
+        "body": "Thanks",
+        "metadata": {},  # no review_name, no location_path/review_id
+    }
+    result = dispatch.deliver_approved("acme", entry)
+    assert result["ok"] is False
+    assert "missing review name" in result["reason"]
+
+
+def test_reviews_live_path_credential_error_raises(tmp_path, monkeypatch):
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    monkeypatch.delenv("DISPATCH_DRY_RUN", raising=False)
+
+    def boom(*a, **kw):
+        raise _credentials.CredentialError("no stored credential for google")
+
+    monkeypatch.setattr(dispatch.credentials, "access_token", boom)
+
+    entry = {
+        "id": "draft-reviews-noauth",
+        "pipeline_id": "reviews",
+        "channel": "gbp_review_reply",
+        "body": "Thanks",
+        "metadata": {"location_path": "accounts/1/locations/2", "review_id": "r1"},
+    }
+    result = dispatch.deliver_approved("acme", entry)
+    assert result["ok"] is False
+    assert "google access_token unavailable" in result["reason"]
+
+
+# ---------------------------------------------------------------------------
+# gbp - live localPosts path
+# ---------------------------------------------------------------------------
+
+
+def test_gbp_live_path_posts_to_localposts(tmp_path, monkeypatch):
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    monkeypatch.delenv("DISPATCH_DRY_RUN", raising=False)
+
+    captured: dict = {}
+
+    def fake_post(url, *, token, json_body):
+        captured["url"] = url
+        captured["body"] = json_body
+        return _FakeHTTPResponse(200, payload={"name": "post_xyz"})
+
+    monkeypatch.setattr(dispatch, "_post_gbp", fake_post)
+    monkeypatch.setattr(dispatch.credentials, "access_token",
+                        lambda tid, prov: "google-tok")
+
+    entry = {
+        "id": "draft-gbp-1",
+        "pipeline_id": "gbp",
+        "channel": "gbp_post",
+        "subject": "GBP post: New service",
+        "body": "We just launched evening patrol coverage.",
+        "metadata": {
+            "location_path": "accounts/aaa/locations/bbb",
+            "post_kind": "STANDARD",
+        },
+    }
+    result = dispatch.deliver_approved("acme", entry)
+    assert result["ok"] is True
+    assert captured["url"] == (
+        "https://mybusiness.googleapis.com/v4/"
+        "accounts/aaa/locations/bbb/localPosts"
+    )
+    assert captured["body"]["summary"] == "We just launched evening patrol coverage."
+    assert captured["body"]["topicType"] == "STANDARD"
+    assert captured["body"]["languageCode"] == "en-US"
+
+
+def test_gbp_live_path_missing_location_raises(tmp_path, monkeypatch):
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    monkeypatch.delenv("DISPATCH_DRY_RUN", raising=False)
+
+    entry = {
+        "id": "draft-gbp-bad",
+        "pipeline_id": "gbp",
+        "body": "x",
+        "metadata": {},
+    }
+    result = dispatch.deliver_approved("acme", entry)
+    assert result["ok"] is False
+    assert "missing metadata.location_path" in result["reason"]
+
+
+def test_gbp_dry_run_short_circuits(tmp_path, monkeypatch):
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    monkeypatch.setenv("DISPATCH_DRY_RUN", "true")
+
+    def explode(*a, **kw):
+        raise AssertionError("network must not be called in DRY_RUN")
+
+    monkeypatch.setattr(dispatch, "_post_gbp", explode)
+    monkeypatch.setattr(dispatch.credentials, "access_token", explode)
+
+    entry = {
+        "id": "draft-gbp-dry",
+        "pipeline_id": "gbp",
+        "body": "x",
+        "metadata": {"location_path": "accounts/1/locations/2"},
+    }
+    result = dispatch.deliver_approved("acme", entry)
+    assert result["ok"] is True
+    assert result["result"]["dry_run"] is True
+
+
+# ---------------------------------------------------------------------------
+# sales - CRMProvider routing
+# ---------------------------------------------------------------------------
+
+
+class _StubProvider:
+    """Records send_email/send_sms calls for assertions. Raises on demand
+    via the configured exception classes."""
+
+    def __init__(self, *, raise_email=None, raise_sms=None,
+                 message_id="msg_stub"):
+        self.calls: list[tuple] = []
+        self._raise_email = raise_email
+        self._raise_sms = raise_sms
+        self._message_id = message_id
+
+    def send_email(self, contact_id, subject, html_body, **kw):
+        self.calls.append(("email", contact_id, subject, html_body))
+        if self._raise_email is not None:
+            raise self._raise_email
+        return self._message_id
+
+    def send_sms(self, contact_id, message, **kw):
+        self.calls.append(("sms", contact_id, message))
+        if self._raise_sms is not None:
+            raise self._raise_sms
+        return self._message_id
+
+
+def test_sales_routes_email_to_ghl_provider(tmp_path, monkeypatch):
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    monkeypatch.delenv("DISPATCH_DRY_RUN", raising=False)
+    _seed_crm_mapping("acme", "ghl")
+
+    stub = _StubProvider(message_id="ghl_msg_1")
+    monkeypatch.setattr(_ghl_provider, "for_tenant", lambda tid: stub)
+
+    entry = {
+        "id": "draft-sales-email",
+        "pipeline_id": "sales",
+        "channel": "sales_cold_email",
+        "subject": "Quick hello",
+        "body": "Hi Maria, want to chat?",
+        "metadata": {"contact_id": "ghl_contact_42", "first_name": "Maria"},
+    }
+    result = dispatch.deliver_approved("acme", entry)
+    assert result["ok"] is True
+    assert result["result"]["kind"] == "ghl"
+    assert result["result"]["message_id"] == "ghl_msg_1"
+    assert stub.calls == [("email", "ghl_contact_42", "Quick hello",
+                           "Hi Maria, want to chat?")]
+
+
+def test_sales_routes_sms_to_ghl_provider(tmp_path, monkeypatch):
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    monkeypatch.delenv("DISPATCH_DRY_RUN", raising=False)
+    _seed_crm_mapping("acme", "ghl")
+
+    stub = _StubProvider(message_id="ghl_sms_1")
+    monkeypatch.setattr(_ghl_provider, "for_tenant", lambda tid: stub)
+
+    entry = {
+        "id": "draft-sales-sms",
+        "pipeline_id": "sales",
+        "channel": "sales_cold_sms",
+        "subject": "",
+        "body": "Quick hello from Acme",
+        "metadata": {"contact_id": "ghl_contact_99"},
+    }
+    result = dispatch.deliver_approved("acme", entry)
+    assert result["ok"] is True
+    assert stub.calls == [("sms", "ghl_contact_99", "Quick hello from Acme")]
+
+
+def test_sales_routes_email_to_hubspot_provider(tmp_path, monkeypatch):
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    monkeypatch.delenv("DISPATCH_DRY_RUN", raising=False)
+    _seed_crm_mapping("acme", "hubspot")
+
+    stub = _StubProvider(message_id="hs_event_1")
+    monkeypatch.setattr(_hubspot_provider, "for_tenant", lambda tid: stub)
+
+    entry = {
+        "id": "draft-sales-hs",
+        "pipeline_id": "sales",
+        "channel": "sales_cold_email",
+        "subject": "Hello",
+        "body": "Email content here",
+        "metadata": {"contact_id": "hs_contact_1"},
+    }
+    result = dispatch.deliver_approved("acme", entry)
+    assert result["ok"] is True
+    assert result["result"]["kind"] == "hubspot"
+
+
+def test_sales_hubspot_sms_raises_dispatch_error(tmp_path, monkeypatch):
+    """W6 lesson: HubSpotProvider.send_sms raises by design (no native SMS).
+    The dispatcher must catch it and flip to approved_send_failed, never
+    silently no-op."""
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    monkeypatch.delenv("DISPATCH_DRY_RUN", raising=False)
+    _seed_crm_mapping("acme", "hubspot")
+
+    stub = _StubProvider(
+        raise_sms=_hubspot_provider.HubSpotProviderError(
+            0, "HubSpot does not natively support outbound SMS."
+        ),
+    )
+    monkeypatch.setattr(_hubspot_provider, "for_tenant", lambda tid: stub)
+
+    enqueued = outgoing_queue.enqueue(
+        tenant_id="acme",
+        pipeline_id="sales",
+        channel="sales_cold_sms",
+        recipient_hint="(lead)",
+        subject="",
+        body="Hello",
+        metadata={"contact_id": "hs_contact_1"},
+    )
+    approved = outgoing_queue.approve("acme", enqueued["id"])
+
+    result = dispatch.deliver_approved("acme", approved)
+    assert result["ok"] is False
+    assert "HubSpot does not natively support outbound SMS" in result["reason"]
+
+    archive = heartbeat_store.tenant_root("acme") / "outgoing" / "archived.jsonl"
+    rows = [json.loads(line) for line in archive.read_text(encoding="utf-8").splitlines() if line.strip()]
+    target = next(r for r in rows if r["id"] == approved["id"])
+    assert target["status"] == "approved_send_failed"
+
+
+def test_sales_routes_to_pipedrive_provider(tmp_path, monkeypatch):
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    monkeypatch.delenv("DISPATCH_DRY_RUN", raising=False)
+    _seed_crm_mapping("acme", "pipedrive")
+
+    # PipedriveProvider.send_email raises by design; the dispatcher must
+    # convert that to DispatchError instead of silently swallowing.
+    stub = _StubProvider(
+        raise_email=_pipedrive_provider.PipedriveProviderError(
+            0, "Pipedrive does not expose a programmatic outbound email API."
+        ),
+    )
+    monkeypatch.setattr(_pipedrive_provider, "for_tenant", lambda tid: stub)
+
+    entry = {
+        "id": "draft-sales-pd",
+        "pipeline_id": "sales",
+        "channel": "sales_cold_email",
+        "subject": "Hi",
+        "body": "Hello",
+        "metadata": {"contact_id": "pd_contact_1"},
+    }
+    result = dispatch.deliver_approved("acme", entry)
+    assert result["ok"] is False
+    assert "Pipedrive does not expose" in result["reason"]
+
+
+def test_sales_ghl_from_email_missing_raises_dispatch_error(tmp_path, monkeypatch):
+    """The W6 lesson trap from ghl_provider.py:202 - send_email without a
+    configured from_email raises GHLProviderError. Dispatcher converts it."""
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    monkeypatch.delenv("DISPATCH_DRY_RUN", raising=False)
+    _seed_crm_mapping("acme", "ghl")
+
+    stub = _StubProvider(
+        raise_email=_ghl_provider.GHLProviderError(
+            0, "from_email not configured on GHLProvider; pass at __init__"
+        ),
+    )
+    monkeypatch.setattr(_ghl_provider, "for_tenant", lambda tid: stub)
+
+    entry = {
+        "id": "draft-sales-noemail",
+        "pipeline_id": "sales",
+        "channel": "sales_cold_email",
+        "subject": "Hi",
+        "body": "Hello",
+        "metadata": {"contact_id": "c_1"},
+    }
+    result = dispatch.deliver_approved("acme", entry)
+    assert result["ok"] is False
+    assert "from_email not configured" in result["reason"]
+
+
+def test_sales_no_crm_mapping_raises(tmp_path, monkeypatch):
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    monkeypatch.delenv("DISPATCH_DRY_RUN", raising=False)
+    # Intentionally no _seed_crm_mapping call.
+
+    entry = {
+        "id": "draft-sales-nomap",
+        "pipeline_id": "sales",
+        "channel": "sales_cold_email",
+        "body": "Hello",
+        "metadata": {"contact_id": "c_1"},
+    }
+    result = dispatch.deliver_approved("acme", entry)
+    assert result["ok"] is False
+    assert "no CRM mapping configured" in result["reason"]
+
+
+def test_sales_no_credentials_raises(tmp_path, monkeypatch):
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    monkeypatch.delenv("DISPATCH_DRY_RUN", raising=False)
+    _seed_crm_mapping("acme", "ghl")
+    monkeypatch.setattr(_ghl_provider, "for_tenant", lambda tid: None)
+
+    entry = {
+        "id": "draft-sales-nocreds",
+        "pipeline_id": "sales",
+        "channel": "sales_cold_email",
+        "body": "Hello",
+        "metadata": {"contact_id": "c_1"},
+    }
+    result = dispatch.deliver_approved("acme", entry)
+    assert result["ok"] is False
+    assert "no ghl credentials stored" in result["reason"]
+
+
+def test_sales_invalid_channel_raises(tmp_path, monkeypatch):
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    monkeypatch.delenv("DISPATCH_DRY_RUN", raising=False)
+    _seed_crm_mapping("acme", "ghl")
+
+    entry = {
+        "id": "draft-sales-badchan",
+        "pipeline_id": "sales",
+        "channel": "carrier_pigeon",
+        "body": "Hello",
+        "metadata": {"contact_id": "c_1"},
+    }
+    result = dispatch.deliver_approved("acme", entry)
+    assert result["ok"] is False
+    assert "channel must indicate email or sms" in result["reason"]
+
+
+def test_sales_dry_run_short_circuits(tmp_path, monkeypatch):
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    monkeypatch.setenv("DISPATCH_DRY_RUN", "true")
+    # No mapping seeded; no provider stubbed; DRY_RUN must skip both checks.
+
+    entry = {
+        "id": "draft-sales-dry",
+        "pipeline_id": "sales",
+        "channel": "sales_cold_email",
+        "body": "Hello",
+        "metadata": {"contact_id": "c_1"},
+    }
+    result = dispatch.deliver_approved("acme", entry)
+    assert result["ok"] is True
+    assert result["result"]["dry_run"] is True
+
+
+# ---------------------------------------------------------------------------
+# email_assistant - SMTP path
+# ---------------------------------------------------------------------------
+
+
+def test_email_assistant_sends_via_smtp(tmp_path, monkeypatch):
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    monkeypatch.delenv("DISPATCH_DRY_RUN", raising=False)
+
+    _credentials.store_paste(
+        "acme",
+        "gmail_app_password",
+        {"email_address": "owner@acme.com", "app_password": "abcd efgh ijkl mnop"},
+    )
+
+    captured: dict = {}
+
+    def fake_smtp(host, port, *, username, password, msg):
+        captured["host"] = host
+        captured["port"] = port
+        captured["username"] = username
+        captured["password"] = password
+        captured["msg"] = msg
+
+    monkeypatch.setattr(dispatch, "_smtp_send", fake_smtp)
+
+    entry = {
+        "id": "draft-email-1",
+        "pipeline_id": "email_assistant",
+        "channel": "email",
+        "recipient_hint": "lead@example.com",
+        "subject": "Re: Quote request",
+        "body": "Hi, here is the quote you asked for.",
+        "metadata": {
+            "from_email": "lead@example.com",
+            "in_reply_to": "<original-msg-id@example.com>",
+        },
+    }
+    result = dispatch.deliver_approved("acme", entry)
+    assert result["ok"] is True
+    assert result["result"]["sent"] is True
+    assert captured["host"] == "smtp.gmail.com"
+    assert captured["port"] == 465
+    assert captured["username"] == "owner@acme.com"
+    msg = captured["msg"]
+    assert msg["From"] == "owner@acme.com"
+    assert msg["To"] == "lead@example.com"
+    assert msg["Subject"] == "Re: Quote request"
+    assert msg["In-Reply-To"] == "<original-msg-id@example.com>"
+    assert msg["References"] == "<original-msg-id@example.com>"
+    assert "here is the quote" in msg.get_payload(decode=True).decode("utf-8")
+
+
+def test_email_assistant_smtp_failure_raises_dispatch_error(tmp_path, monkeypatch):
+    import smtplib as _smtplib
+
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    monkeypatch.delenv("DISPATCH_DRY_RUN", raising=False)
+
+    _credentials.store_paste(
+        "acme",
+        "gmail_app_password",
+        {"email_address": "owner@acme.com", "app_password": "x"},
+    )
+
+    def boom(*a, **kw):
+        raise _smtplib.SMTPAuthenticationError(535, b"Username and Password not accepted")
+
+    monkeypatch.setattr(dispatch, "_smtp_send", boom)
+
+    entry = {
+        "id": "draft-email-fail",
+        "pipeline_id": "email_assistant",
+        "body": "x",
+        "metadata": {"from_email": "lead@example.com"},
+    }
+    result = dispatch.deliver_approved("acme", entry)
+    assert result["ok"] is False
+    assert "SMTP send failed" in result["reason"]
+
+
+def test_email_assistant_missing_creds_raises(tmp_path, monkeypatch):
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    monkeypatch.delenv("DISPATCH_DRY_RUN", raising=False)
+
+    entry = {
+        "id": "draft-email-nocreds",
+        "pipeline_id": "email_assistant",
+        "body": "x",
+        "metadata": {"from_email": "lead@example.com"},
+    }
+    result = dispatch.deliver_approved("acme", entry)
+    assert result["ok"] is False
+    assert "no gmail_app_password credentials" in result["reason"]
+
+
+def test_email_assistant_missing_recipient_raises(tmp_path, monkeypatch):
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    monkeypatch.delenv("DISPATCH_DRY_RUN", raising=False)
+
+    _credentials.store_paste(
+        "acme",
+        "gmail_app_password",
+        {"email_address": "owner@acme.com", "app_password": "x"},
+    )
+
+    entry = {
+        "id": "draft-email-noaddr",
+        "pipeline_id": "email_assistant",
+        "body": "x",
+        "metadata": {},
+    }
+    result = dispatch.deliver_approved("acme", entry)
+    assert result["ok"] is False
+    assert "missing valid recipient" in result["reason"]
+
+
+def test_email_assistant_dry_run_short_circuits(tmp_path, monkeypatch):
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    monkeypatch.setenv("DISPATCH_DRY_RUN", "true")
+
+    def explode(*a, **kw):
+        raise AssertionError("SMTP must not be called in DRY_RUN")
+
+    monkeypatch.setattr(dispatch, "_smtp_send", explode)
+
+    entry = {
+        "id": "draft-email-dry",
+        "pipeline_id": "email_assistant",
+        "body": "x",
+        "metadata": {"from_email": "lead@example.com"},
+    }
+    result = dispatch.deliver_approved("acme", entry)
+    assert result["ok"] is True
+    assert result["result"]["dry_run"] is True
+
+
+# ---------------------------------------------------------------------------
+# Pin no_dispatcher for unwired onboarding pipelines.
+# blog/social/seo/chat_widget intentionally stay unwired until their
+# generic run.py pipelines land. This test guards against accidentally
+# adding them to OUTGOING_HANDLERS without first proving the wire path.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("pipeline_id", ["blog", "social", "seo", "chat_widget"])
+def test_unwired_onboarding_pipeline_returns_no_dispatcher(
+    tmp_path, monkeypatch, pipeline_id,
+):
+    monkeypatch.setenv("TENANT_ROOT", str(tmp_path))
+    entry = {
+        "id": f"draft-{pipeline_id}-1",
+        "pipeline_id": pipeline_id,
+        "channel": "x",
+        "body": "y",
+    }
+    result = dispatch.deliver_approved("acme", entry)
+    assert result["ok"] is False
+    assert result["reason"] == "no_dispatcher"
+
+
+def test_wired_onboarding_pipelines_present_in_registry():
+    """Lock in the registry shape so a refactor can't silently drop one of
+    the four wired handlers."""
+    assert "reviews" in dispatch.OUTGOING_HANDLERS
+    assert "gbp" in dispatch.OUTGOING_HANDLERS
+    assert "sales" in dispatch.OUTGOING_HANDLERS
+    assert "email_assistant" in dispatch.OUTGOING_HANDLERS

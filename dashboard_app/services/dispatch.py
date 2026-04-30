@@ -42,14 +42,23 @@ from __future__ import annotations
 
 import logging
 import os
+import smtplib
 from datetime import datetime, timezone
+from email.mime.text import MIMEText
 from typing import Any, Callable
+
+import httpx
 
 from . import (
     audit_log,
+    credentials,
+    crm_mapping,
+    ghl_provider,
     goals,
     heartbeat_store,
+    hubspot_provider,
     outgoing_queue,
+    pipedrive_provider,
     recs_store,
     tenant_prefs,
 )
@@ -101,27 +110,65 @@ def requires_approval(tenant_id: str, pipeline_id: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+_GBP_BASE_URL = "https://mybusiness.googleapis.com/v4"
+
+
+def _dry_run() -> bool:
+    return os.getenv("DISPATCH_DRY_RUN", "false").strip().lower() in ("true", "1", "yes")
+
+
+def _post_gbp(url: str, *, token: str, json_body: dict[str, Any]) -> Any:
+    """Module-level POST helper so tests can monkeypatch the network call
+    without touching httpx globally. Returns an httpx.Response-shaped object."""
+    return httpx.post(
+        url,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+        json=json_body,
+        timeout=30.0,
+    )
+
+
+def _build_review_name(metadata: dict[str, Any]) -> str:
+    """Reconstruct the GBP review resource name from pipeline metadata.
+
+    The reviews pipeline stores account_path + location_path + review_id; the
+    API expects accounts/{a}/locations/{l}/reviews/{r}. If the queue entry
+    already carries an explicit review_name (e.g. from a hand-built draft),
+    that wins.
+    """
+    location_path = (metadata.get("location_path") or "").strip().strip("/")
+    review_id = (metadata.get("review_id") or "").strip()
+    if location_path and review_id:
+        return f"{location_path}/reviews/{review_id}"
+    return ""
+
+
 def _send_review_reply(tenant_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     """Outgoing handler for the reviews pipeline.
 
-    Posts a reply to a Google Business Profile review. For W3 the real
-    HTTP call is gated behind DISPATCH_DRY_RUN: in dry-run mode (local
-    tests, dev sessions) we log the would-send and return success, so the
-    full Approve -> dispatch.deliver_approved -> handler -> outcome wire
-    is exercised end-to-end without hitting the real GBP API.
+    Posts a reply to a Google Business Profile review via
+    `POST /v4/{review_name}/reply`. DISPATCH_DRY_RUN gates the live call so
+    the test-before-first-send gate (CLAUDE.md) can exercise the full
+    Approve -> deliver_approved -> handler wire without touching Google.
 
-    The non-dry-run branch is intentionally minimal and ships unverified;
-    the live GBP wire format gets locked + tested in W4 alongside the
-    generic gbp/run.py and reviews/run.py pipelines. Per Sam's
-    "test before first send" rule, real review-reply sends require a
-    review pass before DISPATCH_DRY_RUN is unset on the VPS.
+    Token is fetched fresh on every send via credentials.access_token, which
+    refreshes through the 50-min cache. Drafts can sit in the queue for hours
+    or days between enqueue and approve, so caching the token at enqueue time
+    would be a footgun.
     """
     body = (payload.get("body") or "").strip()
     metadata = payload.get("metadata") or {}
     review_meta = metadata.get("review") if isinstance(metadata.get("review"), dict) else {}
-    review_name = review_meta.get("name") or metadata.get("review_name")
+    review_name = (
+        review_meta.get("name")
+        or metadata.get("review_name")
+        or _build_review_name(metadata)
+    )
 
-    if os.getenv("DISPATCH_DRY_RUN", "false").strip().lower() in ("true", "1", "yes"):
+    if _dry_run():
         log.info(
             "DRY_RUN reviews.send tenant=%s body_len=%s review=%s",
             tenant_id,
@@ -135,11 +182,291 @@ def _send_review_reply(tenant_id: str, payload: dict[str, Any]) -> dict[str, Any
             "body_len": len(body),
         }
 
-    # Non-dry-run path is a placeholder; W4 wires the actual GBP call.
-    raise DispatchError(
-        "live GBP review-reply send not wired yet (W4); "
-        "set DISPATCH_DRY_RUN=true for local testing"
-    )
+    if not body:
+        raise DispatchError("review reply body is empty")
+    if not review_name:
+        raise DispatchError(
+            "review reply missing review name "
+            "(need metadata.review.name, metadata.review_name, "
+            "or location_path + review_id)"
+        )
+
+    try:
+        token = credentials.access_token(tenant_id, "google")
+    except (credentials.CredentialError, credentials.ProviderExchangeError) as exc:
+        raise DispatchError(f"google access_token unavailable: {exc}") from exc
+
+    url = f"{_GBP_BASE_URL}/{review_name}/reply"
+    try:
+        resp = _post_gbp(url, token=token, json_body={"comment": body})
+    except httpx.HTTPError as exc:
+        raise DispatchError(f"GBP request failed: {exc}") from exc
+
+    status = getattr(resp, "status_code", 0)
+    if status >= 400:
+        text = (getattr(resp, "text", "") or "")[:300]
+        raise DispatchError(f"GBP reply rejected: HTTP {status}: {text}")
+
+    return {"posted": True, "review_name": review_name, "status_code": status}
+
+
+def _send_gbp_post(tenant_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Outgoing handler for the gbp pipeline.
+
+    Posts a localPost (Google's "What's New" surface) to the tenant's GBP
+    location via `POST /v4/{location_path}/localPosts`. DRY_RUN gated like
+    reviews; same fresh-token-on-every-send pattern.
+    """
+    body = (payload.get("body") or "").strip()
+    metadata = payload.get("metadata") or {}
+    location_path = (metadata.get("location_path") or "").strip().strip("/")
+    post_kind = (metadata.get("post_kind") or "STANDARD").strip().upper() or "STANDARD"
+    language = (metadata.get("language_code") or "en-US").strip() or "en-US"
+
+    if _dry_run():
+        log.info(
+            "DRY_RUN gbp.send tenant=%s body_len=%s location=%s",
+            tenant_id,
+            len(body),
+            location_path or "(no location)",
+        )
+        return {
+            "posted": True,
+            "dry_run": True,
+            "location_path": location_path,
+            "body_len": len(body),
+        }
+
+    if not body:
+        raise DispatchError("gbp post body is empty")
+    if not location_path:
+        raise DispatchError("gbp post missing metadata.location_path")
+
+    try:
+        token = credentials.access_token(tenant_id, "google")
+    except (credentials.CredentialError, credentials.ProviderExchangeError) as exc:
+        raise DispatchError(f"google access_token unavailable: {exc}") from exc
+
+    url = f"{_GBP_BASE_URL}/{location_path}/localPosts"
+    json_body: dict[str, Any] = {
+        "languageCode": language,
+        "summary": body,
+        "topicType": post_kind,
+    }
+    try:
+        resp = _post_gbp(url, token=token, json_body=json_body)
+    except httpx.HTTPError as exc:
+        raise DispatchError(f"GBP request failed: {exc}") from exc
+
+    status = getattr(resp, "status_code", 0)
+    if status >= 400:
+        text = (getattr(resp, "text", "") or "")[:300]
+        raise DispatchError(f"GBP localPost rejected: HTTP {status}: {text}")
+
+    return {"posted": True, "location_path": location_path, "status_code": status}
+
+
+_SALES_SUPPORTED_KINDS = ("ghl", "hubspot", "pipedrive")
+
+
+def _resolve_sales_kind(tenant_id: str) -> str:
+    """Return the CRM kind for a tenant, mirroring the sales pipeline's
+    `_provider_kind` so /approvals routes through the same provider the
+    pipeline drafted with. Empty string when no mapping exists or no kind
+    field is set."""
+    mapping = crm_mapping.load(tenant_id) or {}
+    for key in ("kind", "crm", "provider", "provider_kind"):
+        value = mapping.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip().lower()
+    return ""
+
+
+def _send_sales(tenant_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Outgoing handler for the sales pipeline.
+
+    Resolves the tenant's CRM (GHL / HubSpot / Pipedrive) via
+    crm_mapping.json, builds the matching provider, and routes to
+    send_email or send_sms based on the queue entry's channel. Each
+    provider's typed error class is converted to DispatchError so the
+    archived entry flips to approved_send_failed cleanly.
+
+    Per the W6 partial-method-surface lesson
+    (lessons/mistake_provider_abstraction_incomplete_method_surface.md),
+    every supported provider's vendor-error class is caught explicitly.
+    HubSpotProvider.send_sms and PipedriveProvider.send_email/send_sms
+    raise by design when the vendor lacks the operation; those raise into
+    DispatchError instead of silently no-oping.
+    """
+    metadata = payload.get("metadata") or {}
+    contact_id = str(metadata.get("contact_id") or "").strip()
+    channel = (payload.get("channel") or "").strip().lower()
+    body = payload.get("body") or ""
+    subject = payload.get("subject") or ""
+
+    is_email = "email" in channel
+    is_sms = "sms" in channel or "text" in channel
+
+    if _dry_run():
+        log.info(
+            "DRY_RUN sales.send tenant=%s channel=%s contact=%s body_len=%s",
+            tenant_id,
+            channel or "(no channel)",
+            contact_id or "(no contact)",
+            len(body),
+        )
+        return {
+            "sent": True,
+            "dry_run": True,
+            "channel": channel,
+            "contact_id": contact_id,
+        }
+
+    if not contact_id:
+        raise DispatchError("sales draft missing metadata.contact_id")
+    if not body.strip():
+        raise DispatchError("sales draft body is empty")
+    if not (is_email or is_sms):
+        raise DispatchError(
+            f"sales channel must indicate email or sms; got {channel!r}"
+        )
+
+    kind = _resolve_sales_kind(tenant_id)
+    if not kind:
+        raise DispatchError(
+            "no CRM mapping configured for tenant "
+            "(crm_mapping.json missing kind/crm/provider field)"
+        )
+    if kind not in _SALES_SUPPORTED_KINDS:
+        raise DispatchError(
+            f"unsupported CRM kind {kind!r}; "
+            f"expected one of {_SALES_SUPPORTED_KINDS}"
+        )
+
+    if kind == "ghl":
+        provider = ghl_provider.for_tenant(tenant_id)
+        provider_error: type[Exception] = ghl_provider.GHLProviderError
+    elif kind == "hubspot":
+        provider = hubspot_provider.for_tenant(tenant_id)
+        provider_error = hubspot_provider.HubSpotProviderError
+    else:
+        provider = pipedrive_provider.for_tenant(tenant_id)
+        provider_error = pipedrive_provider.PipedriveProviderError
+
+    if provider is None:
+        raise DispatchError(f"no {kind} credentials stored for tenant")
+
+    try:
+        if is_email:
+            message_id = provider.send_email(
+                contact_id,
+                subject or "(no subject)",
+                body,
+            )
+        else:
+            message_id = provider.send_sms(contact_id, body)
+    except provider_error as exc:
+        raise DispatchError(str(exc)) from exc
+
+    return {
+        "sent": True,
+        "kind": kind,
+        "channel": channel,
+        "contact_id": contact_id,
+        "message_id": message_id,
+    }
+
+
+def _smtp_send(
+    host: str,
+    port: int,
+    *,
+    username: str,
+    password: str,
+    msg: MIMEText,
+) -> None:
+    """Module-level SMTP helper so tests can monkeypatch without spinning up
+    a real server. Real path uses SMTPS on 465; STARTTLS on 587 is left for
+    a future tenant whose provider doesn't support implicit TLS."""
+    with smtplib.SMTP_SSL(host, port, timeout=30) as smtp:
+        smtp.login(username, password)
+        smtp.send_message(msg)
+
+
+def _send_email_assistant(tenant_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Outgoing handler for the email_assistant pipeline.
+
+    Sends a reply via SMTP using the tenant's stored Gmail App Password.
+    Sets In-Reply-To + References headers from metadata.in_reply_to so the
+    reply threads with the incoming email correctly. DRY_RUN gated; the
+    live path requires gmail_app_password credentials with both
+    email_address and app_password fields.
+    """
+    body = (payload.get("body") or "").strip()
+    subject = payload.get("subject") or "(no subject)"
+    metadata = payload.get("metadata") or {}
+    to_addr = str(
+        metadata.get("from_email")
+        or payload.get("recipient_hint")
+        or ""
+    ).strip()
+    in_reply_to = str(
+        metadata.get("in_reply_to")
+        or metadata.get("message_id")
+        or ""
+    ).strip()
+
+    if _dry_run():
+        log.info(
+            "DRY_RUN email_assistant.send tenant=%s to=%s body_len=%s",
+            tenant_id,
+            to_addr or "(no addr)",
+            len(body),
+        )
+        return {
+            "sent": True,
+            "dry_run": True,
+            "to": to_addr,
+            "body_len": len(body),
+        }
+
+    if not body:
+        raise DispatchError("email_assistant body is empty")
+    if not to_addr or "@" not in to_addr:
+        raise DispatchError(
+            f"email_assistant missing valid recipient (got {to_addr!r})"
+        )
+
+    creds = credentials.load(tenant_id, "gmail_app_password")
+    if not creds:
+        raise DispatchError("no gmail_app_password credentials stored for tenant")
+    sender = str(creds.get("email_address") or "").strip()
+    password = str(creds.get("app_password") or "")
+    if not sender or not password:
+        raise DispatchError(
+            "gmail_app_password credential missing email_address or app_password"
+        )
+
+    msg = MIMEText(body, "plain", "utf-8")
+    msg["Subject"] = subject
+    msg["From"] = sender
+    msg["To"] = to_addr
+    if in_reply_to:
+        msg["In-Reply-To"] = in_reply_to
+        msg["References"] = in_reply_to
+
+    try:
+        _smtp_send(
+            "smtp.gmail.com",
+            465,
+            username=sender,
+            password=password,
+            msg=msg,
+        )
+    except (smtplib.SMTPException, OSError) as exc:
+        raise DispatchError(f"SMTP send failed: {exc}") from exc
+
+    return {"sent": True, "to": to_addr, "from": sender}
 
 
 def _rec_review_reply_draft(tenant_id: str, rec: dict[str, Any]) -> dict[str, Any]:
@@ -174,11 +501,22 @@ def _rec_review_reply_draft(tenant_id: str, rec: dict[str, Any]) -> dict[str, An
 # registries
 # ---------------------------------------------------------------------------
 
-# Maps pipeline_id -> outgoing handler. Reference handler ships for
-# `reviews`; the other six onboarding roles are added in W4-W7 alongside
-# their generic run.py pipelines.
+# Maps pipeline_id -> outgoing handler. Four roles are wired to live
+# delivery paths (DRY_RUN gated per CLAUDE.md "test before first send"):
+#
+#   reviews         -> POST /v4/{review.name}/reply (GBP)
+#   gbp             -> POST /v4/{location_path}/localPosts (GBP What's New)
+#   sales           -> CRMProvider.send_email/send_sms (GHL/HubSpot/Pipedrive)
+#   email_assistant -> SMTP via tenant Gmail App Password
+#
+# The remaining onboarding roles (blog, social, seo, chat_widget) intentionally
+# stay unwired; /approvals will return {ok:False, reason:"no_dispatcher"} for
+# them. Wiring those in lands alongside their generic run.py pipelines.
 OUTGOING_HANDLERS: dict[str, Callable[[str, dict[str, Any]], dict[str, Any]]] = {
     "reviews": _send_review_reply,
+    "gbp": _send_gbp_post,
+    "sales": _send_sales,
+    "email_assistant": _send_email_assistant,
 }
 
 # Maps rec.proposed_tool -> rec handler. Reference handler ships for
