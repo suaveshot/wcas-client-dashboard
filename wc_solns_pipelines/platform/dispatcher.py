@@ -188,10 +188,13 @@ def dispatch_one(
 # ---------------------------------------------------------------------------
 
 
-def _platform_dir() -> Path | None:
-    base = os.environ.get("TENANT_ROOT")
-    if not base:
-        return None
+def _platform_dir() -> Path:
+    """Resolve the platform-level state dir, defaulting to /opt/wc-solns
+    when TENANT_ROOT is unset. Matches how heartbeat_store and other
+    services treat TENANT_ROOT (default-when-unset, never fail-when-unset)
+    so cron-spawned runs that don't carry TENANT_ROOT still land state
+    in the canonical location."""
+    base = os.environ.get("TENANT_ROOT") or "/opt/wc-solns"
     return Path(base) / "_platform"
 
 
@@ -200,8 +203,6 @@ def _write_last_tick(tick: dict[str, Any]) -> None:
     os.replace. Failures are logged, never raised - visibility file
     must not break the dispatch loop."""
     pdir = _platform_dir()
-    if pdir is None:
-        return
     try:
         pdir.mkdir(parents=True, exist_ok=True)
         path = pdir / "dispatcher_last_tick.json"
